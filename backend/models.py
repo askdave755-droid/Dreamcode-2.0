@@ -27,8 +27,12 @@ class Dream(Base):
     
     # Referral system
     referral_code = Column(String, unique=True, index=True, default=generate_referral_code)
-    referred_by = Column(String, ForeignKey("dreams.id"), nullable=True)
+        referred_by = Column(String, ForeignKey("dreams.id"), nullable=True)
     referral_count = Column(Integer, default=0)
     discount_applied = Column(Boolean, default=False)
+    
+    # Relationships
+    parent = relationship("Dream", remote_side="Dream.id", back_populates="referrals")
+    referrals = relationship("Dream", back_populates="parent")
     
     referrals = relationship("Dream", back_populates="referred_by")
