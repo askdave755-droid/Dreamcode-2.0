@@ -126,6 +126,7 @@ async def analyze_teaser(dream: DreamInput, db: Session = Depends(get_db)):
     
     teaser_text = generate_teaser(dream.dict())
     
+    # FIXED: Only use columns that exist in the database
     db_dream = Dream(
         id=dream_id,
         name=dream.name,
@@ -134,10 +135,9 @@ async def analyze_teaser(dream: DreamInput, db: Session = Depends(get_db)):
         emotion=dream.emotion,
         colors=dream.colors,
         symbols=dream.symbols,
-        teaser=teaser_text,
         referred_by=referrer.id if referrer else None,
-        discount_applied=True if referrer else False,
-        status="pending"
+        is_paid=False
+        # REMOVED: teaser, discount_applied, status - these columns don't exist!
     )
     db.add(db_dream)
     db.commit()
@@ -145,7 +145,7 @@ async def analyze_teaser(dream: DreamInput, db: Session = Depends(get_db)):
     return {
         "dream_id": dream_id,
         "referral_code": db_dream.referral_code,
-        "teaser": teaser_text,
+        "teaser": teaser_text,  # Return in response, don't save to DB
         "hebrew_year": get_hebrew_year(),
         "discount_applied": True if referrer else False,
         "price": 8.50 if referrer else 17.00
@@ -158,9 +158,10 @@ async def get_referral_info(code: str, db: Session = Depends(get_db)):
     if not referrer:
         raise HTTPException(status_code=404, detail="Blessing code not found")
     
+    # FIXED: Don't reference referrer.teaser - that column doesn't exist!
     return {
         "referrer_name": referrer.name,
-        "referrer_dream_preview": referrer.teaser[:100] + "..." if referrer.teaser else "A blessed vision",
+        "referrer_dream_preview": f"A blessed vision from {referrer.name}",  # Fixed - no teaser column
         "discount_active": True,
         "discount_percent": 50,
         "message": f"Your friend {referrer.name} has blessed you with a 50% discount on your dream interpretation. Like the loaves and fishes, this blessing multiplies when shared."
@@ -175,7 +176,8 @@ async def create_checkout(data: dict, db: Session = Depends(get_db)):
     if not dream:
         raise HTTPException(status_code=404, detail="Dream not found")
     
-    amount = 850 if dream.discount_applied else 1700
+    # Check if discount applies based on referrer
+    amount = 850 if dream.referred_by else 1700  # Use referred_by to check discount
     
     try:
         session = stripe.checkout.Session.create(
@@ -214,10 +216,11 @@ async def verify_payment(data: PaymentVerify, background_tasks: BackgroundTasks,
             if not dream:
                 raise HTTPException(status_code=404, detail="Dream not found")
             
-            if dream.status == "paid" and dream.full_report:
+            # FIXED: Check is_paid instead of status
+            if dream.is_paid and dream.interpretation:
                 return {
                     "status": "paid",
-                    "report": dream.full_report,
+                    "report": json.loads(dream.interpretation),  # interpretation is stored as JSON string
                     "message": "Report already generated"
                 }
             
@@ -231,9 +234,9 @@ async def verify_payment(data: PaymentVerify, background_tasks: BackgroundTasks,
             
             pdf_bytes = generate_dream_pdf(dream.name, report)
             
-            dream.status = "paid"
-            dream.paid_at = datetime.utcnow()
-            dream.full_report = report
+            # FIXED: Use is_paid and interpretation columns only
+            dream.is_paid = True
+            dream.interpretation = json.dumps(report)  # Store as JSON string
             db.commit()
             
             background_tasks.add_task(
@@ -245,11 +248,11 @@ async def verify_payment(data: PaymentVerify, background_tasks: BackgroundTasks,
                 dream.referral_code
             )
             
+            # Note: referral_count doesn't exist in schema, so we skip that
             if dream.referred_by:
                 referrer = db.query(Dream).filter(Dream.id == dream.referred_by).first()
                 if referrer:
-                    referrer.referral_count += 1
-                    db.commit()
+                    # Send notification but don't increment count (no column for it)
                     background_tasks.add_task(
                         send_referrer_notification,
                         referrer.email,
@@ -274,10 +277,13 @@ async def download_pdf(dream_id: str, db: Session = Depends(get_db)):
     
     dream = db.query(Dream).filter(Dream.id == dream_id).first()
     
-    if not dream or dream.status != "paid":
+    # FIXED: Check is_paid instead of status
+    if not dream or not dream.is_paid:
         raise HTTPException(status_code=404, detail="Report not found")
     
-    pdf_bytes = generate_dream_pdf(dream.name, dream.full_report)
+    # FIXED: Load interpretation from JSON string
+    report = json.loads(dream.interpretation) if dream.interpretation else {}
+    pdf_bytes = generate_dream_pdf(dream.name, report)
     
     return Response(
         content=pdf_bytes,
