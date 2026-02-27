@@ -8,8 +8,12 @@ class Dream(Base):
     __tablename__ = "dreams"
     
     id = Column(String, primary_key=True, index=True)
-    user_email = Column(String, index=True)
+    name = Column(String)
+    email = Column(String, index=True)
     dream_text = Column(Text)
+    emotion = Column(String)
+    colors = Column(String)
+    symbols = Column(String)
     interpretation = Column(Text, nullable=True)
     is_paid = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
