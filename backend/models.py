@@ -31,4 +31,4 @@ class Dream(Base):
     referral_count = Column(Integer, default=0)
     discount_applied = Column(Boolean, default=False)
     
-    referrals = relationship("Dream", backref="parent", remote_side=[id], lazy="dynamic")
+    referrals = relationship("Dream", back_populates="referred_by")
