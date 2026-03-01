@@ -1,20 +1,20 @@
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
-from io import BytesIO
-import datetime
+from datetime import datetime
+import io
 
 def get_hebrew_year():
-    """Convert current Gregorian year to Hebrew year"""
-    gregorian_year = datetime.datetime.now().year
+    """Calculate Hebrew year (approximate)"""
+    gregorian_year = datetime.now().year
     hebrew_year = gregorian_year + 3760
     return hebrew_year
 
-def generate_dream_pdf(dream_text, interpretation, email):
-    """Generate a luxury PDF report using ReportLab"""
-    buffer = BytesIO()
+def generate_dream_pdf(name, report_data):
+    """Generate luxury PDF report using ReportLab"""
+    buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer,
         pagesize=letter,
@@ -24,7 +24,7 @@ def generate_dream_pdf(dream_text, interpretation, email):
         bottomMargin=18
     )
     
-    # Container for the 'Flowable' objects
+    # Container for elements
     elements = []
     
     # Styles
@@ -33,65 +33,65 @@ def generate_dream_pdf(dream_text, interpretation, email):
         'CustomTitle',
         parent=styles['Heading1'],
         fontSize=24,
-        textColor=colors.HexColor('#D4AF37'),  # Gold color
+        textColor=colors.HexColor('#D4AF37'),  # Gold
         spaceAfter=30,
-        alignment=1  # Center alignment
+        alignment=1  # Center
     )
     
     heading_style = ParagraphStyle(
         'CustomHeading',
         parent=styles['Heading2'],
         fontSize=16,
-        textColor=colors.HexColor('#2C1810'),  # Dark brown
+        textColor=colors.HexColor('#8B4513'),  # Saddle brown
         spaceAfter=12
     )
     
-    body_style = ParagraphStyle(
-        'CustomBody',
+    normal_style = ParagraphStyle(
+        'CustomNormal',
         parent=styles['BodyText'],
         fontSize=11,
-        textColor=colors.HexColor('#3D2817'),
-        spaceAfter=12,
-        leading=16
+        textColor=colors.HexColor('#2F4F4F'),
+        spaceAfter=12
     )
     
-    # Hebrew year
-    hebrew_year = get_hebrew_year()
-    
-    # Title
-    elements.append(Paragraph("DreamDecode™ Biblical Report", title_style))
+    # Header
+    elements.append(Paragraph("DreamDecode", title_style))
+    elements.append(Paragraph(f"Biblical Dream Interpretation for {name}", styles['Heading2']))
+    elements.append(Paragraph(f"Hebrew Year {get_hebrew_year()}", styles['Italic']))
     elements.append(Spacer(1, 0.2*inch))
     
-    # Subtitle with Hebrew year
-    elements.append(Paragraph(f"Year {hebrew_year} Anno Mundi", heading_style))
-    elements.append(Spacer(1, 0.3*inch))
+    # Interpretations
+    if 'interpretations' in report_data:
+        for interp in report_data['interpretations']:
+            elements.append(Paragraph(interp['title'], heading_style))
+            elements.append(Paragraph(interp['meaning'], normal_style))
+            elements.append(Spacer(1, 0.1*inch))
     
-    # Dream Section
-    elements.append(Paragraph("THE DREAM", heading_style))
-    dream_para = dream_text.replace('\n', '<br/>')
-    elements.append(Paragraph(dream_para, body_style))
-    elements.append(Spacer(1, 0.2*inch))
+    # Scripture
+    if 'scripture' in report_data:
+        elements.append(Spacer(1, 0.2*inch))
+        elements.append(Paragraph("Scriptural Foundation", heading_style))
+        
+        scripture = report_data['scripture']
+        elements.append(Paragraph(f"<i>{scripture.get('text', '')}</i>", normal_style))
+        elements.append(Paragraph(f"<b>{scripture.get('reference', '')}</b>", styles['Normal']))
+        elements.append(Paragraph(scripture.get('context', ''), styles['Normal']))
     
-    # Interpretation Section
-    elements.append(Paragraph("BIBLICAL INTERPRETATION", heading_style))
-    interp_para = interpretation.replace('\n', '<br/>')
-    elements.append(Paragraph(interp_para, body_style))
-    elements.append(Spacer(1, 0.3*inch))
+    # Prayer
+    if 'prayer' in report_data:
+        elements.append(Spacer(1, 0.2*inch))
+        elements.append(Paragraph("Prayer for Your Dream", heading_style))
+        elements.append(Paragraph(report_data['prayer'], normal_style))
     
     # Footer
-    footer_style = ParagraphStyle(
-        'Footer',
-        parent=styles['Normal'],
-        fontSize=9,
-        textColor=colors.grey,
-        alignment=1
-    )
-    elements.append(Paragraph(f"Prepared for: {email} | DreamDecode™ | www.dreamdecode.app", footer_style))
+    elements.append(Spacer(1, 0.5*inch))
+    elements.append(Paragraph(
+        "<i>This interpretation is provided for spiritual guidance. Always seek confirmation through prayer and wise counsel.</i>",
+        styles['Normal']
+    ))
     
     # Build PDF
     doc.build(elements)
-    
-    # Get the value of the BytesIO buffer
     pdf = buffer.getvalue()
     buffer.close()
     
