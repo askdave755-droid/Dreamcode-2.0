@@ -1,10 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import './index.css';
 
-// Ensure API URL is set correctly
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-
-console.log('API URL configured:', API_URL); // Debug log
 
 function App() {
   const [step, setStep] = useState('input');
@@ -18,7 +15,6 @@ function App() {
     referral_code: ''
   });
   
-  // Critical state variables
   const [dreamId, setDreamId] = useState(null);
   const [referralCode, setReferralCode] = useState('');
   const [teaser, setTeaser] = useState('');
@@ -26,21 +22,18 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   
-  // Gift/referral state
   const [giftMode, setGiftMode] = useState(false);
   const [giftInfo, setGiftInfo] = useState(null);
   const [price, setPrice] = useState(17.00);
 
   const emotions = ['Fear', 'Peace', 'Urgency', 'Joy', 'Confusion', 'Awe', 'Warning', 'Love'];
 
-  // Handle URL parameters on load
+  // Handle URL parameters
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const code = params.get('code');
     const sessionId = params.get('session_id');
     const dId = params.get('dream_id');
-    
-    console.log('URL Params:', { code, sessionId, dId }); // Debug log
     
     if (code) {
       setGiftMode(true);
@@ -73,8 +66,6 @@ function App() {
     setLoading(true);
     setError(null);
     
-    console.log('Submitting dream data:', formData); // Debug log
-    
     try {
       const res = await fetch(`${API_URL}/api/analyze-teaser`, {
         method: 'POST',
@@ -91,9 +82,7 @@ function App() {
       }
       
       const data = await res.json();
-      console.log('Teaser response:', data); // Debug log
       
-      // Critical: Verify we received dream_id
       if (!data.dream_id) {
         throw new Error('No dream ID received from server');
       }
@@ -113,20 +102,13 @@ function App() {
   };
 
   const handlePayment = async () => {
-    console.log('Payment clicked, dreamId:', dreamId); // Debug log
-    
-    // Critical safety check
     if (!dreamId) {
       setError('Dream ID is missing. Please refresh and try again.');
-      console.error('Payment attempted without dreamId');
       return;
     }
     
     setLoading(true);
     setError(null);
-    
-    const requestBody = { dream_id: dreamId };
-    console.log('Sending payment request:', requestBody); // Debug log
     
     try {
       const res = await fetch(`${API_URL}/api/create-checkout-session`, {
@@ -135,19 +117,15 @@ function App() {
           'Content-Type': 'application/json',
           'Accept': 'application/json'
         },
-        body: JSON.stringify(requestBody)
+        body: JSON.stringify({ dream_id: dreamId })
       });
       
-      console.log('Payment response status:', res.status); // Debug log
-      
       if (!res.ok) {
-        const errorData = await res.json().catch(() => ({ detail: 'Unknown error' }));
-        console.error('Payment error response:', errorData);
+        const errorData = await res.json();
         throw new Error(errorData.detail || `Payment failed (${res.status})`);
       }
       
       const data = await res.json();
-      console.log('Payment success, redirecting to:', data.url); // Debug log
       
       if (!data.url) {
         throw new Error('No checkout URL received');
@@ -185,7 +163,6 @@ function App() {
       }
       
       const data = await res.json();
-      console.log('Payment verification:', data); // Debug log
       
       if (data.status === 'paid' && data.report) {
         setReport(data.report);
@@ -236,6 +213,7 @@ function App() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-amber-50 font-cormorant selection:bg-amber-500/30">
+      {/* Header */}
       <div className="border-b border-amber-900/30 bg-slate-900/50 backdrop-blur-sm sticky top-0 z-50">
         <div className="max-w-2xl mx-auto px-6 py-4 flex justify-between items-center">
           <h1 className="text-2xl font-bold text-amber-400 font-cinzel tracking-wider">
@@ -250,13 +228,7 @@ function App() {
       <div className="max-w-2xl mx-auto px-6 py-12">
         <ErrorMessage />
         
-        {/* Debug info - remove in production */}
-        {process.env.NODE_ENV === 'development' && (
-          <div className="mb-4 p-2 bg-slate-900/50 text-xs text-amber-600/50 font-mono">
-            DreamID: {dreamId || 'null'} | Step: {step} | API: {API_URL}
-          </div>
-        )}
-
+        {/* Gift Mode Banner */}
         {giftMode && giftInfo && (
           <div className="bg-gradient-to-r from-amber-900/30 to-amber-600/20 border border-amber-500/50 p-6 rounded-lg mb-8 text-center animate-pulse">
             <div className="text-3xl mb-2">🕊️</div>
@@ -273,6 +245,7 @@ function App() {
           </div>
         )}
 
+        {/* Input Step */}
         {step === 'input' && (
           <div className="space-y-8 animate-fade-in">
             <div className="text-center space-y-4">
@@ -370,6 +343,7 @@ function App() {
           </div>
         )}
 
+        {/* Teaser Step */}
         {step === 'teaser' && (
           <div className="space-y-8 text-center animate-fade-in">
             <div className="bg-slate-900/50 p-8 rounded-lg border border-amber-600/30 shadow-2xl shadow-amber-900/10 relative overflow-hidden">
@@ -413,9 +387,8 @@ function App() {
               <div className="pt-4">
                 <div className="text-3xl font-cinzel text-amber-400 mb-2">${price.toFixed(2)}</div>
                 
-                {/* Debug info visible on teaser step */}
                 {!dreamId && (
-                  <div className="mb-4 p-2 bg-red-900/20 text-red-400 text-xs">
+                  <div className="mb-4 p-2 bg-red-900/20 text-red-400 text-xs rounded">
                     ⚠️ Error: Dream ID missing. Please refresh page.
                   </div>
                 )}
@@ -442,6 +415,7 @@ function App() {
           </div>
         )}
 
+        {/* Reveal Step */}
         {step === 'reveal' && report && (
           <div className="space-y-8 animate-fade-in">
             <div className="text-center">
