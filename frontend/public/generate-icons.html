@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Generate DreamDecode Icons</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 20px;
+      background: #0f172a;
+      color: #f59e0b;
+      text-align: center;
+    }
+    canvas {
+      border: 2px solid #f59e0b;
+      margin: 20px auto;
+      display: block;
+    }
+    button {
+      background: #f59e0b;
+      color: #0f172a;
+      border: none;
+      padding: 15px 30px;
+      font-size: 18px;
+      font-weight: bold;
+      cursor: pointer;
+      margin: 10px;
+      border-radius: 5px;
+    }
+    button:hover {
+      background: #fbbf24;
+    }
+  </style>
+</head>
+<body>
+  <h1>🕊️ DreamDecode Icon Generator</h1>
+  <p>Click buttons to download icons</p>
+  
+  <h2>192x192</h2>
+  <canvas id="canvas192" width="192" height="192"></canvas>
+  <button onclick="download192()">Download 192x192 PNG</button>
+
+  <h2>512x512</h2>
+  <canvas id="canvas512" width="512" height="512"></canvas>
+  <button onclick="download512()">Download 512x512 PNG</button>
+
+  <script>
+    // Generate 192x192
+    const c192 = document.getElementById('canvas192');
+    const ctx192 = c192.getContext('2d');
+    ctx192.fillStyle = '#0f172a';
+    ctx192.fillRect(0, 0, 192, 192);
+    ctx192.strokeStyle = '#f59e0b';
+    ctx192.lineWidth = 4;
+    ctx192.strokeRect(2, 2, 188, 188);
+    ctx192.font = '100px serif';
+    ctx192.textAlign = 'center';
+    ctx192.textBaseline = 'middle';
+    ctx192.fillText('🕊️', 96, 86);
+    ctx192.fillStyle = '#f59e0b';
+    ctx192.font = 'bold 14px serif';
+    ctx192.fillText('DREAM', 96, 154);
+    ctx192.font = 'bold 10px serif';
+    ctx192.fillText('DECODE', 96, 172);
+
+    // Generate 512x512
+    const c512 = document.getElementById('canvas512');
+    const ctx512 = c512.getContext('2d');
+    ctx512.fillStyle = '#0f172a';
+    ctx512.fillRect(0, 0, 512, 512);
+    ctx512.strokeStyle = '#f59e0b';
+    ctx512.lineWidth = 12;
+    ctx512.strokeRect(6, 6, 500, 500);
+    ctx512.font = '280px serif';
+    ctx512.textAlign = 'center';
+    ctx512.textBaseline = 'middle';
+    ctx512.fillText('🕊️', 256, 230);
+    ctx512.fillStyle = '#f59e0b';
+    ctx512.font = 'bold 40px serif';
+    ctx512.fillText('DREAM', 256, 410);
+    ctx512.font = 'bold 28px serif';
+    ctx512.fillText('DECODE', 256, 450);
+
+    function download192() {
+      const link = document.createElement('a');
+      link.download = 'icon-192x192.png';
+      link.href = c192.toDataURL();
+      link.click();
+    }
+
+    function download512() {
+      const link = document.createElement('a');
+      link.download = 'icon-512x512.png';
+      link.href = c512.toDataURL();
+      link.click();
+    }
+  </script>
+</body>
+</html>
