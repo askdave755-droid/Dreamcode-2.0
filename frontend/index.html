@@ -1,38 +1,89 @@
 <!DOCTYPE html>
-<html>
-<head>
-  <title>Generate Icons</title>
-</head>
-<body>
-  <canvas id="canvas192" width="192" height="192"></canvas>
-  <canvas id="canvas512" width="512" height="512"></canvas>
-  <script>
-    // Generate 192x192 icon
-    const c192 = document.getElementById('canvas192');
-    const ctx192 = c192.getContext('2d');
-    ctx192.fillStyle = '#0f172a';
-    ctx192.fillRect(0, 0, 192, 192);
-    ctx192.fillStyle = '#f59e0b';
-    ctx192.font = 'bold 80px serif';
-    ctx192.textAlign = 'center';
-    ctx192.textBaseline = 'middle';
-    ctx192.fillText('🕊️', 96, 96);
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     
-    // Generate 512x512 icon
-    const c512 = document.getElementById('canvas512');
-    const ctx512 = c512.getContext('2d');
-    ctx512.fillStyle = '#0f172a';
-    ctx512.fillRect(0, 0, 512, 512);
-    ctx512.fillStyle = '#f59e0b';
-    ctx512.font = 'bold 200px serif';
-    ctx512.textAlign = 'center';
-    ctx512.textBaseline = 'middle';
-    ctx512.fillText('🕊️', 256, 256);
+    <!-- PWA Manifest -->
+    <link rel="manifest" href="/manifest.json" />
     
-    // Download links
-    console.log('Right-click and save these as PNG:');
-    console.log('192x192:', c192.toDataURL());
-    console.log('512x512:', c512.toDataURL());
-  </script>
-</body>
+    <!-- Theme Colors -->
+    <meta name="theme-color" content="#f59e0b" />
+    <meta name="msapplication-TileColor" content="#0f172a" />
+    
+    <!-- Apple iOS PWA Support -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="DreamDecode" />
+    <link rel="apple-touch-icon" href="/icon-192x192.png" />
+    
+    <!-- Favicon -->
+    <link rel="icon" type="image/png" sizes="32x32" href="/icon-192x192.png" />
+    
+    <!-- SEO Meta Tags -->
+    <meta name="description" content="Unlock the biblical meaning of your dreams with AI-powered interpretation in the tradition of Joseph and Daniel." />
+    <meta name="keywords" content="dream interpretation, biblical dreams, Joseph, Daniel, AI dream analysis, christian dream meaning" />
+    
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+    
+    <title>DreamDecode - Biblical Dream Interpreter</title>
+    
+    <style>
+      body {
+        margin: 0;
+        background-color: #0f172a;
+        font-family: 'Cormorant Garamond', serif;
+      }
+      #root {
+        min-height: 100vh;
+      }
+      .loading-splash {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 100vh;
+        background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+        color: #f59e0b;
+      }
+      .loading-splash h1 {
+        font-family: 'Cinzel', serif;
+        font-size: 2.5rem;
+        margin-bottom: 1rem;
+        animation: pulse 2s infinite;
+      }
+      @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.7; }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root">
+      <div class="loading-splash">
+        <h1>DreamDecode</h1>
+        <p>"In the last days, God says, I will pour out my Spirit..."</p>
+      </div>
+    </div>
+    
+    <script type="module" src="/src/main.jsx"></script>
+    
+    <!-- Service Worker Registration -->
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js')
+            .then((registration) => {
+              console.log('DreamDecode PWA registered:', registration.scope);
+            })
+            .catch((error) => {
+              console.log('PWA registration failed:', error);
+            });
+        });
+      }
+    </script>
+  </body>
 </html>
