@@ -1,7 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import './index.css';
 
+// Ensure API URL is set correctly
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+
+console.log('API URL configured:', API_URL); // Debug log
 
 function App() {
   const [step, setStep] = useState('input');
@@ -14,22 +17,30 @@ function App() {
     symbols: '',
     referral_code: ''
   });
+  
+  // Critical state variables
   const [dreamId, setDreamId] = useState(null);
   const [referralCode, setReferralCode] = useState('');
   const [teaser, setTeaser] = useState('');
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  
+  // Gift/referral state
   const [giftMode, setGiftMode] = useState(false);
   const [giftInfo, setGiftInfo] = useState(null);
   const [price, setPrice] = useState(17.00);
 
   const emotions = ['Fear', 'Peace', 'Urgency', 'Joy', 'Confusion', 'Awe', 'Warning', 'Love'];
 
+  // Handle URL parameters on load
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const code = params.get('code');
     const sessionId = params.get('session_id');
     const dId = params.get('dream_id');
+    
+    console.log('URL Params:', { code, sessionId, dId }); // Debug log
     
     if (code) {
       setGiftMode(true);
@@ -47,85 +58,181 @@ function App() {
   const fetchGiftInfo = async (code) => {
     try {
       const res = await fetch(`${API_URL}/api/referral/${code}`);
+      if (!res.ok) throw new Error('Invalid referral code');
       const data = await res.json();
       setGiftInfo(data);
       setPrice(8.50);
     } catch (error) {
-      console.error('Invalid referral code');
+      console.error('Gift info error:', error);
+      setError('Invalid blessing code');
     }
   };
 
   const handleSubmitTeaser = async (e) => {
     e.preventDefault();
     setLoading(true);
+    setError(null);
+    
+    console.log('Submitting dream data:', formData); // Debug log
     
     try {
       const res = await fetch(`${API_URL}/api/analyze-teaser`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
         body: JSON.stringify(formData)
       });
       
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.detail || 'Failed to analyze dream');
+      }
+      
       const data = await res.json();
+      console.log('Teaser response:', data); // Debug log
+      
+      // Critical: Verify we received dream_id
+      if (!data.dream_id) {
+        throw new Error('No dream ID received from server');
+      }
+      
       setDreamId(data.dream_id);
       setReferralCode(data.referral_code);
       setTeaser(data.teaser);
-      setPrice(data.price);
+      setPrice(data.price || 17.00);
       setStep('teaser');
+      
     } catch (error) {
-      alert('Error analyzing dream');
+      console.error('Teaser error:', error);
+      setError(error.message || 'Error analyzing dream');
     } finally {
       setLoading(false);
     }
   };
 
   const handlePayment = async () => {
+    console.log('Payment clicked, dreamId:', dreamId); // Debug log
+    
+    // Critical safety check
+    if (!dreamId) {
+      setError('Dream ID is missing. Please refresh and try again.');
+      console.error('Payment attempted without dreamId');
+      return;
+    }
+    
     setLoading(true);
+    setError(null);
+    
+    const requestBody = { dream_id: dreamId };
+    console.log('Sending payment request:', requestBody); // Debug log
+    
     try {
       const res = await fetch(`${API_URL}/api/create-checkout-session`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dream_id: dreamId })
+        headers: { 
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify(requestBody)
       });
       
+      console.log('Payment response status:', res.status); // Debug log
+      
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({ detail: 'Unknown error' }));
+        console.error('Payment error response:', errorData);
+        throw new Error(errorData.detail || `Payment failed (${res.status})`);
+      }
+      
       const data = await res.json();
+      console.log('Payment success, redirecting to:', data.url); // Debug log
+      
+      if (!data.url) {
+        throw new Error('No checkout URL received');
+      }
+      
       window.location.href = data.url;
+      
     } catch (error) {
-      alert('Error creating payment');
+      console.error('Payment error:', error);
+      setError(error.message || 'Error creating payment session');
       setLoading(false);
     }
   };
 
   const verifyPayment = async (sessionId, dId) => {
     setLoading(true);
+    setError(null);
+    
     try {
       const res = await fetch(`${API_URL}/api/verify-payment`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: sessionId, dream_id: dId })
+        headers: { 
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({ 
+          session_id: sessionId, 
+          dream_id: dId 
+        })
       });
       
-      const data = await res.json();
-      if (data.status === 'paid') {
-        setReport(data.report);
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.detail || 'Payment verification failed');
       }
+      
+      const data = await res.json();
+      console.log('Payment verification:', data); // Debug log
+      
+      if (data.status === 'paid' && data.report) {
+        setReport(data.report);
+      } else {
+        setError('Payment not completed');
+      }
+      
     } catch (error) {
-      alert('Error verifying payment');
+      console.error('Verification error:', error);
+      setError(error.message || 'Error verifying payment');
     } finally {
       setLoading(false);
     }
   };
 
   const downloadPDF = () => {
+    if (!dreamId) {
+      setError('Dream ID missing for download');
+      return;
+    }
     window.open(`${API_URL}/api/download-pdf/${dreamId}`);
   };
 
-  const shareLink = `${window.location.origin}/gift?code=${referralCode}&from=${formData.name.replace(' ', '-')}`;
+  const shareLink = `${window.location.origin}/gift?code=${referralCode}&from=${formData.name.replace(/\s+/g, '-')}`;
 
   const copyToClipboard = () => {
-    navigator.clipboard.writeText(shareLink);
-    alert('Blessing link copied! Share it with someone who needs revelation.');
+    navigator.clipboard.writeText(shareLink).then(() => {
+      alert('Blessing link copied! Share it with someone who needs revelation.');
+    }).catch(err => {
+      console.error('Copy failed:', err);
+      alert('Failed to copy link');
+    });
   };
+
+  // Error display component
+  const ErrorMessage = () => error ? (
+    <div className="bg-red-900/30 border border-red-600/50 text-red-200 p-4 rounded-lg mb-4 text-center">
+      <p className="font-bold">Error</p>
+      <p className="text-sm">{error}</p>
+      <button 
+        onClick={() => setError(null)}
+        className="mt-2 text-xs underline hover:text-red-100"
+      >
+        Dismiss
+      </button>
+    </div>
+  ) : null;
 
   return (
     <div className="min-h-screen bg-slate-950 text-amber-50 font-cormorant selection:bg-amber-500/30">
@@ -141,6 +248,15 @@ function App() {
       </div>
 
       <div className="max-w-2xl mx-auto px-6 py-12">
+        <ErrorMessage />
+        
+        {/* Debug info - remove in production */}
+        {process.env.NODE_ENV === 'development' && (
+          <div className="mb-4 p-2 bg-slate-900/50 text-xs text-amber-600/50 font-mono">
+            DreamID: {dreamId || 'null'} | Step: {step} | API: {API_URL}
+          </div>
+        )}
+
         {giftMode && giftInfo && (
           <div className="bg-gradient-to-r from-amber-900/30 to-amber-600/20 border border-amber-500/50 p-6 rounded-lg mb-8 text-center animate-pulse">
             <div className="text-3xl mb-2">🕊️</div>
@@ -296,13 +412,28 @@ function App() {
 
               <div className="pt-4">
                 <div className="text-3xl font-cinzel text-amber-400 mb-2">${price.toFixed(2)}</div>
+                
+                {/* Debug info visible on teaser step */}
+                {!dreamId && (
+                  <div className="mb-4 p-2 bg-red-900/20 text-red-400 text-xs">
+                    ⚠️ Error: Dream ID missing. Please refresh page.
+                  </div>
+                )}
+                
                 <button
                   onClick={handlePayment}
-                  disabled={loading}
-                  className="w-full bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-white font-bold py-4 px-6 rounded-lg shadow-lg shadow-amber-900/20 transition-all transform hover:scale-[1.02] disabled:opacity-50 font-cinzel tracking-wider text-lg"
+                  disabled={loading || !dreamId}
+                  className="w-full bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-white font-bold py-4 px-6 rounded-lg shadow-lg shadow-amber-900/20 transition-all transform hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed font-cinzel tracking-wider text-lg"
                 >
                   {loading ? 'Preparing the Revelation...' : 'Unlock Full Report'}
                 </button>
+                
+                {dreamId && (
+                  <p className="text-xs text-amber-600/50 mt-2 font-mono">
+                    ID: {dreamId.substring(0, 8)}...
+                  </p>
+                )}
+                
                 <p className="text-xs text-amber-200/40 mt-3">
                   Secure payment via Stripe • Instant delivery via email
                 </p>
@@ -319,7 +450,7 @@ function App() {
             </div>
 
             <div className="space-y-6">
-              {report.interpretations.map((interp, idx) => (
+              {report.interpretations?.map((interp, idx) => (
                 <div key={idx} className="bg-slate-900/30 p-6 rounded-lg border-l-4 border-amber-600 shadow-lg">
                   <h3 className="text-xl text-amber-400 font-cinzel mb-3">{interp.title}</h3>
                   <p className="text-amber-100/90 leading-relaxed text-lg">{interp.meaning}</p>
@@ -328,9 +459,9 @@ function App() {
 
               <div className="bg-amber-950/30 p-6 rounded-lg border border-amber-600/30 text-center">
                 <h3 className="text-lg text-amber-400 font-cinzel mb-4">Scriptural Anchor</h3>
-                <p className="text-amber-100 italic text-lg mb-2">"{report.scripture.text}"</p>
-                <p className="text-amber-600 font-bold font-cinzel">{report.scripture.reference}</p>
-                <p className="text-amber-200/60 text-sm mt-2">{report.scripture.context}</p>
+                <p className="text-amber-100 italic text-lg mb-2">"{report.scripture?.text}"</p>
+                <p className="text-amber-600 font-bold font-cinzel">{report.scripture?.reference}</p>
+                <p className="text-amber-200/60 text-sm mt-2">{report.scripture?.context}</p>
               </div>
 
               <div className="bg-slate-900 p-8 rounded-lg border border-amber-600/30 text-center">
@@ -341,13 +472,15 @@ function App() {
               <div className="flex gap-4">
                 <button
                   onClick={downloadPDF}
-                  className="flex-1 bg-gradient-to-r from-slate-800 to-slate-700 hover:from-slate-700 hover:to-slate-600 text-amber-400 font-bold py-4 px-6 rounded-lg border border-amber-600/30 transition-all font-cinzel"
+                  disabled={!dreamId}
+                  className="flex-1 bg-gradient-to-r from-slate-800 to-slate-700 hover:from-slate-700 hover:to-slate-600 text-amber-400 font-bold py-4 px-6 rounded-lg border border-amber-600/30 transition-all font-cinzel disabled:opacity-50"
                 >
                   Download PDF
                 </button>
                 <button
                   onClick={copyToClipboard}
-                  className="flex-1 bg-gradient-to-r from-amber-800 to-amber-700 hover:from-amber-700 hover:to-amber-600 text-white font-bold py-4 px-6 rounded-lg border border-amber-600/30 transition-all font-cinzel"
+                  disabled={!referralCode}
+                  className="flex-1 bg-gradient-to-r from-amber-800 to-amber-700 hover:from-amber-700 hover:to-amber-600 text-white font-bold py-4 px-6 rounded-lg border border-amber-600/30 transition-all font-cinzel disabled:opacity-50"
                 >
                   Share Blessing
                 </button>
