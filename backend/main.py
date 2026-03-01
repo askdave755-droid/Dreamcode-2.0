@@ -26,7 +26,7 @@ app = FastAPI(title="DreamDecode API")
 # CORS Configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure properly for production
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -128,7 +128,6 @@ def generate_full_report(dream_data: dict):
         return json.loads(response.choices[0].message.content)
     except Exception as e:
         print(f"OpenAI report error: {e}")
-        # Return fallback structure if AI fails
         return {
             "interpretations": [
                 {"title": "The Revelation", "meaning": "Your dream carries spiritual significance that requires prayerful consideration."},
@@ -201,7 +200,7 @@ async def get_referral_info(code: str, db: Session = Depends(get_db)):
 
 @app.post("/api/create-checkout-session")
 async def create_checkout(request: CheckoutRequest, db: Session = Depends(get_db)):
-    """Create Stripe checkout session"""
+    """Create Stripe checkout session with URL validation"""
     stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
     dream_id = request.dream_id
     
@@ -218,13 +217,40 @@ async def create_checkout(request: CheckoutRequest, db: Session = Depends(get_db
     
     print(f"✅ Found dream: {dream.email}, referred_by: {dream.referred_by}")
     
+    # Get and clean FRONTEND_URL
+    raw_frontend_url = os.getenv("FRONTEND_URL", "")
+    print(f"Raw FRONTEND_URL: '{raw_frontend_url}'")
+    
+    if not raw_frontend_url:
+        raise HTTPException(status_code=500, detail="FRONTEND_URL not configured")
+    
+    # Clean the URL - remove quotes, whitespace, trailing slashes
+    frontend_url = raw_frontend_url.strip().strip('"').strip("'").rstrip('/')
+    print(f"Cleaned FRONTEND_URL: '{frontend_url}'")
+    
+    # Validate URL format
+    if not frontend_url.startswith(('http://', 'https://')):
+        print(f"❌ Invalid URL format: {frontend_url}")
+        raise HTTPException(status_code=500, detail=f"Invalid FRONTEND_URL format: {frontend_url}")
+    
     # Calculate price
     amount = 850 if dream.referred_by else 1700  # $8.50 or $17.00 in cents
     
+    # Build URLs carefully
+    success_path = f"/reveal?session_id={{CHECKOUT_SESSION_ID}}&dream_id={dream_id}"
+    cancel_path = "/cancel"
+    
+    success_url = f"{frontend_url}{success_path}"
+    cancel_url = f"{frontend_url}{cancel_path}"
+    
+    print(f"Success URL: {success_url}")
+    print(f"Cancel URL: {cancel_url}")
+    
     try:
-        session = stripe.checkout.Session.create(
-            payment_method_types=['card'],
-            line_items=[{
+        # Create Stripe session
+        session_params = {
+            "payment_method_types": ['card'],
+            "line_items": [{
                 'price_data': {
                     'currency': 'usd',
                     'unit_amount': amount,
@@ -235,11 +261,15 @@ async def create_checkout(request: CheckoutRequest, db: Session = Depends(get_db
                 },
                 'quantity': 1,
             }],
-            mode='payment',
-            success_url=f"{os.getenv('FRONTEND_URL')}/reveal?session_id={{CHECKOUT_SESSION_ID}}&dream_id={dream_id}",
-            cancel_url=f"{os.getenv('FRONTEND_URL')}/cancel",
-            customer_email=dream.email,
-        )
+            "mode": 'payment',
+            "success_url": success_url,
+            "cancel_url": cancel_url,
+            "customer_email": dream.email,
+        }
+        
+        print(f"Creating Stripe session with params: {json.dumps(session_params, indent=2)}")
+        
+        session = stripe.checkout.Session.create(**session_params)
         
         print(f"✅ Stripe session created: {session.id}")
         
@@ -249,8 +279,13 @@ async def create_checkout(request: CheckoutRequest, db: Session = Depends(get_db
             "session_id": session.id
         }
         
+    except stripe.error.StripeError as e:
+        print(f"❌ Stripe API error: {str(e)}")
+        print(f"Error type: {type(e).__name__}")
+        raise HTTPException(status_code=400, detail=f"Stripe error: {str(e)}")
     except Exception as e:
-        print(f"❌ Stripe error: {str(e)}")
+        print(f"❌ Unexpected error: {str(e)}")
+        print(f"Error type: {type(e).__name__}")
         raise HTTPException(status_code=400, detail=f"Payment setup failed: {str(e)}")
 
 @app.post("/api/verify-payment")
