@@ -328,6 +328,10 @@ function App() {
                   <span className="text-amber-400">✓</span>
                 </div>
                 <div className="flex justify-between text-sm text-amber-200/60 items-center">
+                  <span className="flex items-center gap-2">🌾 Joseph & Daniel Anchor</span>
+                  <span className="text-amber-400">✓</span>
+                </div>
+                <div className="flex justify-between text-sm text-amber-200/60 items-center">
                   <span className="flex items-center gap-2">🙏 Personalized Prayer</span>
                   <span className="text-amber-400">✓</span>
                 </div>
@@ -390,6 +394,31 @@ function App() {
                 <p className="text-amber-600 font-bold font-cinzel">{report.scripture?.reference}</p>
                 <p className="text-amber-200/60 text-sm mt-2">{report.scripture?.context}</p>
               </div>
+
+              {/* Joseph & Daniel Anchor */}
+              {report.joseph_daniel_anchor && (
+                <div className="bg-slate-900/50 p-6 rounded-lg border border-amber-900/40 space-y-6">
+                  <h3 className="text-lg text-amber-400 font-cinzel text-center">The Joseph & Daniel Anchor</h3>
+                  
+                  {report.joseph_daniel_anchor.joseph && (
+                    <div className="border-l-4 border-amber-700 pl-4 space-y-2">
+                      <h4 className="text-amber-400 font-cinzel">🌾 Joseph — The Interpreter of Pharaoh's Dreams</h4>
+                      <p className="text-amber-600 font-bold text-sm font-cinzel">{report.joseph_daniel_anchor.joseph.reference}</p>
+                      <p className="text-amber-100/90 leading-relaxed">{report.joseph_daniel_anchor.joseph.connection}</p>
+                      <p className="text-amber-200/70 italic">{report.joseph_daniel_anchor.joseph.insight}</p>
+                    </div>
+                  )}
+                  
+                  {report.joseph_daniel_anchor.daniel && (
+                    <div className="border-l-4 border-amber-700 pl-4 space-y-2">
+                      <h4 className="text-amber-400 font-cinzel">🦁 Daniel — The Revealer of Mysteries</h4>
+                      <p className="text-amber-600 font-bold text-sm font-cinzel">{report.joseph_daniel_anchor.daniel.reference}</p>
+                      <p className="text-amber-100/90 leading-relaxed">{report.joseph_daniel_anchor.daniel.connection}</p>
+                      <p className="text-amber-200/70 italic">{report.joseph_daniel_anchor.daniel.insight}</p>
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div className="bg-slate-900 p-8 rounded-lg border border-amber-600/30 text-center">
                 <h3 className="text-xl text-amber-400 font-cinzel mb-4 border-b border-amber-600/30 pb-2 inline-block">A Prayer for Your Dream</h3>
