@@ -37,6 +37,23 @@ def send_dream_email(to_email, name, report, pdf_bytes, referral_code):
         <p>{scripture.get('context', '')}</p>
         """
     
+    anchor_html = ""
+    anchor = report.get('joseph_daniel_anchor')
+    if anchor:
+        joseph = anchor.get('joseph', {})
+        daniel = anchor.get('daniel', {})
+        anchor_html = f"""
+        <h3 style="color: #D4AF37;">The Joseph & Daniel Anchor</h3>
+        <p><b>Joseph — The Interpreter of Pharaoh's Dreams</b><br>
+        <i>{joseph.get('reference', '')}</i><br>
+        {joseph.get('connection', '')}<br>
+        <b>Insight:</b> {joseph.get('insight', '')}</p>
+        <p><b>Daniel — The Revealer of Mysteries</b><br>
+        <i>{daniel.get('reference', '')}</i><br>
+        {daniel.get('connection', '')}<br>
+        <b>Insight:</b> {daniel.get('insight', '')}</p>
+        """
+    
     prayer_html = ""
     if 'prayer' in report:
         prayer_html = f"""
@@ -58,13 +75,15 @@ def send_dream_email(to_email, name, report, pdf_bytes, referral_code):
         
         {scripture_html}
         
+        {anchor_html}
+        
         {prayer_html}
         
         <hr style="border: none; border-top: 1px solid #D4AF37; margin: 20px 0;">
         
         <div style="background: #f9f9f9; padding: 20px; border-radius: 5px; margin: 20px 0;">
             <h3 style="color: #D4AF37; margin-top: 0;">🕊️ Share the Blessing</h3>
-            <p>Pass on a 50% discount to someone who needs spiritual insight:</p>
+            <p>Pass on the gift of free dream interpretation to someone who needs spiritual insight:</p>
             <p><a href="{share_link}" style="color: #D4AF37; text-decoration: none; font-weight: bold;">{share_link}</a></p>
         </div>
         
