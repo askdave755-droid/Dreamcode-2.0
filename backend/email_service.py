@@ -27,6 +27,34 @@ def send_dream_email(to_email, name, report, pdf_bytes, referral_code):
             <p>{interp['meaning']}</p>
             """
     
+    symbol_dictionary_html = ""
+    symbol_dictionary = report.get('symbol_dictionary')
+    if symbol_dictionary:
+        entries = ""
+        for entry in symbol_dictionary:
+            entries += f"""
+            <p style="margin-bottom: 12px;">
+                <b style="color: #8B4513;">{entry.get('symbol', '').title()}</b> —
+                {entry.get('biblical_meaning', '')}<br>
+                <i style="color: #888;">{entry.get('scripture', '')}</i>
+            </p>
+            """
+        symbol_dictionary_html = f"""
+        <h3 style="color: #D4AF37;">Dream Symbol Dictionary</h3>
+        <p><i>Every symbol decoded through the language of Scripture</i></p>
+        {entries}
+        """
+    
+    discernment_html = ""
+    discernment = report.get('source_discernment')
+    if discernment:
+        discernment_html = f"""
+        <h3 style="color: #D4AF37;">🕊️ Source Discernment</h3>
+        <p>This dream most likely flows from: <b>{discernment.get('source', '')}</b></p>
+        <p>{discernment.get('explanation', '')}</p>
+        <p><b>Counsel:</b> {discernment.get('counsel', '')}</p>
+        """
+    
     scripture_html = ""
     if 'scripture' in report:
         scripture = report['scripture']
@@ -72,6 +100,10 @@ def send_dream_email(to_email, name, report, pdf_bytes, referral_code):
         <hr style="border: none; border-top: 1px solid #D4AF37; margin: 20px 0;">
         
         {interpretations_html}
+        
+        {symbol_dictionary_html}
+        
+        {discernment_html}
         
         {scripture_html}
         
