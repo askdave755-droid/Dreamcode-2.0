@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 from database import get_db, engine
 from models import Base, Dream
 from pdf_generator import generate_dream_pdf, get_hebrew_year
-from email_service import send_dream_email, send_referrer_notification
+from email_service import send_dream_email, send_referrer_notification, send_test_email
 
 load_dotenv()
 
@@ -533,6 +533,15 @@ async def download_pdf(dream_id: str, db: Session = Depends(get_db)):
         media_type="application/pdf",
         headers={"Content-Disposition": f"attachment; filename=dream-revelation-{dream_id}.pdf"}
     )
+
+@app.get("/api/test-email")
+def test_email():
+    """Diagnostic: send a test email via SendGrid to the app's own FROM_EMAIL
+    and return exactly what SendGrid said. Safe from abuse — it can only ever
+    mail the sender address itself."""
+    result = send_test_email()
+    result["sendgrid_key"] = "set" if os.getenv("SENDGRID_API_KEY") else "MISSING"
+    return result
 
 @app.get("/health")
 def health():
