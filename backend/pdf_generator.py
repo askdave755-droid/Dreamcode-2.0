@@ -67,6 +67,42 @@ def generate_dream_pdf(name, report_data):
             elements.append(Paragraph(interp['meaning'], normal_style))
             elements.append(Spacer(1, 0.1*inch))
     
+    # Dream Symbol Dictionary
+    symbol_dictionary = report_data.get('symbol_dictionary')
+    if symbol_dictionary:
+        elements.append(Spacer(1, 0.2*inch))
+        elements.append(Paragraph("Dream Symbol Dictionary", heading_style))
+        elements.append(Paragraph(
+            "<i>Every symbol decoded through the language of Scripture</i>",
+            normal_style
+        ))
+        elements.append(Spacer(1, 0.05*inch))
+        for entry in symbol_dictionary:
+            elements.append(Paragraph(
+                f"<b>{entry.get('symbol', '').title()}</b> — {entry.get('biblical_meaning', '')}",
+                normal_style
+            ))
+            elements.append(Paragraph(
+                f"<i>{entry.get('scripture', '')}</i>",
+                styles['Normal']
+            ))
+            elements.append(Spacer(1, 0.08*inch))
+    
+    # Source Discernment
+    discernment = report_data.get('source_discernment')
+    if discernment:
+        elements.append(Spacer(1, 0.2*inch))
+        elements.append(Paragraph("Source Discernment", heading_style))
+        elements.append(Paragraph(
+            f"This dream most likely flows from: <b>{discernment.get('source', '')}</b>",
+            normal_style
+        ))
+        elements.append(Paragraph(discernment.get('explanation', ''), normal_style))
+        elements.append(Paragraph(
+            f"<b>Counsel:</b> {discernment.get('counsel', '')}",
+            normal_style
+        ))
+    
     # Scripture
     if 'scripture' in report_data:
         elements.append(Spacer(1, 0.2*inch))
