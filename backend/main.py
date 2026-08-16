@@ -123,6 +123,18 @@ def generate_full_report(dream_data: dict):
             "text": "Full verse text",
             "context": "Why this applies"
         },
+        "joseph_daniel_anchor": {
+            "joseph": {
+                "reference": "A specific verse from Joseph's dream interpretations (Genesis 40 or 41)",
+                "connection": "How the symbolism or message of THIS dream parallels the dream Joseph interpreted (e.g., Pharaoh's cows, the cupbearer's vine, the baker's baskets) — be specific about the shared symbol or theme",
+                "insight": "The interpretive principle from Joseph that applies to the dreamer now (e.g., seasons of preparation, favor after waiting, warning of coming change)"
+            },
+            "daniel": {
+                "reference": "A specific verse from Daniel's dream/vision interpretations (Daniel 2, 4, or 7)",
+                "connection": "How THIS dream parallels the vision Daniel interpreted (e.g., Nebuchadnezzar's statue, the great tree, the four beasts) — be specific about the shared symbol or theme",
+                "insight": "The interpretive principle from Daniel that applies to the dreamer now (e.g., humility before promotion, God's sovereignty over seasons, the Most High rules in the affairs of men)"
+            }
+        },
         "prayer": "Personalized prayer using dream elements"
     }"""
     
@@ -143,7 +155,7 @@ def generate_full_report(dream_data: dict):
                 {"role": "user", "content": user_prompt}
             ],
             temperature=0.7,
-            max_tokens=2000,
+            max_tokens=2500,
             response_format={"type": "json_object"}
         )
         return json.loads(response.choices[0].message.content)
@@ -159,6 +171,18 @@ def generate_full_report(dream_data: dict):
                 "reference": "Proverbs 3:5-6",
                 "text": "Trust in the LORD with all your heart and lean not on your own understanding.",
                 "context": "God speaks through dreams, but interpretation belongs to Him."
+            },
+            "joseph_daniel_anchor": {
+                "joseph": {
+                    "reference": "Genesis 41:16",
+                    "connection": "Like Joseph before Pharaoh, the meaning of your dream is held by God Himself and revealed in His timing.",
+                    "insight": "Joseph waited years for his own dreams to unfold — faithfulness in the waiting is part of the interpretation."
+                },
+                "daniel": {
+                    "reference": "Daniel 2:22",
+                    "connection": "As with Daniel, the deep and hidden things of your dream belong to God, who reveals mysteries to those who seek Him.",
+                    "insight": "Daniel sought God in prayer before the interpretation came — pursue Him first, and clarity will follow."
+                }
             },
             "prayer": f"Lord, reveal the meaning of this vision to {dream_data['name']} according to Your wisdom and timing."
         }
