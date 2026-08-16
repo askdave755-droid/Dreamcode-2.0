@@ -74,7 +74,7 @@ def get_openai_client():
     return _openai_client
 
 def generate_teaser(dream_data: dict):
-    """Generate 2-sentence teaser using GPT-3.5"""
+    """Generate 2-sentence teaser using GPT-4o-mini"""
     prompt = f"""You are a biblical dream interpreter in the tradition of Joseph. 
     Analyze this dream and write a compelling 2-sentence teaser that:
     1. References ONE specific detail from the dream (color, object, or emotion)
@@ -90,7 +90,7 @@ def generate_teaser(dream_data: dict):
     
     try:
         response = get_openai_client().chat.completions.create(
-            model="gpt-3.5-turbo",
+            model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.8,
             max_tokens=150
@@ -101,7 +101,7 @@ def generate_teaser(dream_data: dict):
         return "A mysterious vision approaches your spirit... but its full meaning awaits revelation."
 
 def generate_full_report(dream_data: dict):
-    """Generate full biblical interpretation using GPT-4"""
+    """Generate full biblical interpretation using GPT-4o"""
     system_prompt = """You are a prophetic dream interpreter in the tradition of Joseph (Genesis 40-41) and Daniel (Daniel 2, 4, 7).
     
     Interpret using biblical typology:
@@ -137,7 +137,7 @@ def generate_full_report(dream_data: dict):
     
     try:
         response = get_openai_client().chat.completions.create(
-            model="gpt-4-turbo-preview",
+            model="gpt-4o",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
