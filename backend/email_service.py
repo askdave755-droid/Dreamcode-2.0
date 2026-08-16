@@ -1,23 +1,117 @@
 import os
-from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import Mail, Attachment, FileContent, FileName, FileType, Disposition
+import json
 import base64
+import requests
 
-def get_sendgrid_client():
-    """Initialize SendGrid client"""
-    api_key = os.getenv("SENDGRID_API_KEY")
-    if not api_key:
-        print("⚠️ SENDGRID_API_KEY not set, emails will not be sent")
-        return None
-    return SendGridAPIClient(api_key)
+# ---------- Provider selection ----------
+# Brevo is checked first (free tier: 300 emails/day, no credit card).
+# SendGrid is the fallback (free tier: 100 emails/day).
+# Set either BREVO_API_KEY or SENDGRID_API_KEY in Railway — the active
+# provider is auto-detected. No other code change needed to switch.
+
+FROM_NAME = "DreamDecode"
+
+def _brevo_key():
+    return os.getenv("BREVO_API_KEY")
+
+def _sendgrid_key():
+    return os.getenv("SENDGRID_API_KEY")
+
+def email_provider():
+    """Which email provider is active, based on which env key is set"""
+    if _brevo_key():
+        return "brevo"
+    if _sendgrid_key():
+        return "sendgrid"
+    return None
+
+def _from_email():
+    return os.getenv("FROM_EMAIL", "askdave755@gmail.com")
+
+# ---------- Low-level senders ----------
+
+def _send_via_brevo(to_email, subject, html_content, pdf_bytes=None, pdf_name="dream-revelation.pdf"):
+    """Send via Brevo (formerly Sendinblue) transactional API"""
+    payload = {
+        "sender": {"email": _from_email(), "name": FROM_NAME},
+        "to": [{"email": to_email}],
+        "subject": subject,
+        "htmlContent": html_content
+    }
+    if pdf_bytes:
+        payload["attachment"] = [{
+            "content": base64.b64encode(pdf_bytes).decode(),
+            "name": pdf_name
+        }]
+    try:
+        r = requests.post(
+            "https://api.brevo.com/v3/smtp/email",
+            headers={
+                "api-key": _brevo_key(),
+                "Content-Type": "application/json",
+                "Accept": "application/json"
+            },
+            data=json.dumps(payload),
+            timeout=30
+        )
+        if r.status_code in (200, 201, 202):
+            print(f"✅ Brevo email sent to {to_email}, status: {r.status_code}")
+            return {"sent": True, "provider": "brevo", "status_code": r.status_code}
+        print(f"❌ Brevo email failed to {to_email}: {r.status_code} | body: {r.text}")
+        return {"sent": False, "provider": "brevo", "error": f"HTTP {r.status_code}", "provider_body": r.text}
+    except Exception as e:
+        print(f"❌ Brevo email exception to {to_email}: {e}")
+        return {"sent": False, "provider": "brevo", "error": str(e)}
+
+def _send_via_sendgrid(to_email, subject, html_content, pdf_bytes=None, pdf_name="dream-revelation.pdf"):
+    """Send via SendGrid (legacy path)"""
+    from sendgrid import SendGridAPIClient
+    from sendgrid.helpers.mail import Mail, Attachment, FileContent, FileName, FileType, Disposition
+    
+    sg = SendGridAPIClient(_sendgrid_key())
+    message = Mail(
+        from_email=_from_email(),
+        to_emails=to_email,
+        subject=subject,
+        html_content=html_content
+    )
+    
+    if pdf_bytes:
+        encoded = base64.b64encode(pdf_bytes).decode()
+        attachment = Attachment()
+        attachment.file_content = FileContent(encoded)
+        attachment.file_name = FileName(pdf_name)
+        attachment.file_type = FileType("application/pdf")
+        attachment.disposition = Disposition("attachment")
+        message.add_attachment(attachment)
+    
+    try:
+        response = sg.send(message)
+        print(f"✅ SendGrid email sent to {to_email}, status: {response.status_code}")
+        return {"sent": True, "provider": "sendgrid", "status_code": response.status_code}
+    except Exception as e:
+        body = getattr(e, 'body', None)
+        print(f"❌ SendGrid email failed to {to_email}: {str(e)} | body: {body}")
+        return {"sent": False, "provider": "sendgrid", "error": str(e), "provider_body": str(body)}
+
+def send_email(to_email, subject, html_content, pdf_bytes=None, pdf_name="dream-revelation.pdf"):
+    """Unified sender — routes to whichever provider is configured.
+    Always returns a result dict so failures are visible, never silent."""
+    provider = email_provider()
+    if provider == "brevo":
+        return _send_via_brevo(to_email, subject, html_content, pdf_bytes, pdf_name)
+    if provider == "sendgrid":
+        return _send_via_sendgrid(to_email, subject, html_content, pdf_bytes, pdf_name)
+    print(f"⚠️ No email provider configured (set BREVO_API_KEY or SENDGRID_API_KEY) — skipping email to {to_email}")
+    return {"sent": False, "error": "No email provider configured (BREVO_API_KEY or SENDGRID_API_KEY missing)"}
+
+# ---------- DreamDecode emails ----------
 
 def send_dream_email(to_email, name, report, pdf_bytes, referral_code):
-    """Send dream interpretation email with PDF attachment.
-    Returns a result dict so callers (and logs) can see exactly what SendGrid said."""
-    sg = get_sendgrid_client()
-    if not sg:
-        print(f"Skipping email to {to_email} - SendGrid not configured")
-        return {"sent": False, "error": "SENDGRID_API_KEY not set"}
+    """Send dream interpretation email with PDF attachment"""
+    if not email_provider():
+        print(f"Skipping email to {to_email} - no email provider configured")
+        return {"sent": False, "error": "No email provider configured"}
     
     # Build email content
     interpretations_html = ""
@@ -126,81 +220,43 @@ def send_dream_email(to_email, name, report, pdf_bytes, referral_code):
     </div>
     """
     
-    from_email = os.getenv("FROM_EMAIL", "askdave755@gmail.com")
-    
-    message = Mail(
-        from_email=from_email,
-        to_emails=to_email,
-        subject="Your Biblical Dream Interpretation is Ready",
-        html_content=html_content
+    return send_email(
+        to_email,
+        "Your Biblical Dream Interpretation is Ready",
+        html_content,
+        pdf_bytes
     )
-    
-    # Attach PDF
-    if pdf_bytes:
-        encoded = base64.b64encode(pdf_bytes).decode()
-        attachment = Attachment()
-        attachment.file_content = FileContent(encoded)
-        attachment.file_name = FileName("dream-revelation.pdf")
-        attachment.file_type = FileType("application/pdf")
-        attachment.disposition = Disposition("attachment")
-        message.add_attachment(attachment)
-    
-    try:
-        response = sg.send(message)
-        print(f"✅ Email sent to {to_email}, status: {response.status_code}")
-        return {"sent": True, "status_code": response.status_code}
-    except Exception as e:
-        # SendGrid errors carry the response body — that body is the real diagnosis
-        body = getattr(e, 'body', None)
-        print(f"❌ Email failed to {to_email}: {str(e)} | body: {body}")
-        return {"sent": False, "error": str(e), "sendgrid_body": str(body)}
 
 def send_test_email():
-    """Diagnostic: send a test email to the app's own FROM_EMAIL and report
-    exactly what SendGrid returned (status code or error body)."""
-    sg = get_sendgrid_client()
-    if not sg:
-        return {"sent": False, "error": "SENDGRID_API_KEY not set"}
+    """Diagnostic: send a test email to the app's own FROM_EMAIL via the
+    active provider and report exactly what the provider said."""
+    provider = email_provider()
+    if not provider:
+        return {"sent": False, "error": "No email provider configured (BREVO_API_KEY or SENDGRID_API_KEY missing)"}
     
-    from_email = os.getenv("FROM_EMAIL", "askdave755@gmail.com")
+    html_content = """
+    <div style="font-family: Georgia, serif; max-width: 600px; margin: 0 auto; color: #333;">
+        <h2 style="color: #D4AF37;">Email Pipeline Working</h2>
+        <p>If you're reading this, the email provider accepted and delivered the message.</p>
+        <p>The full report pipeline (interpretation + symbol dictionary + PDF) uses this same path.</p>
+    </div>
+    """
     
-    message = Mail(
-        from_email=from_email,
-        to_emails=from_email,
-        subject="DreamDecode Email Diagnostic",
-        html_content="""
-        <div style="font-family: Georgia, serif; max-width: 600px; margin: 0 auto; color: #333;">
-            <h2 style="color: #D4AF37;">Email Pipeline Working</h2>
-            <p>If you're reading this, SendGrid accepted and delivered the message.</p>
-            <p>The full report pipeline (interpretation + symbol dictionary + PDF) uses this same path.</p>
-        </div>
-        """
+    result = send_email(
+        _from_email(),
+        "DreamDecode Email Diagnostic",
+        html_content
     )
-    
-    try:
-        response = sg.send(message)
-        print(f"✅ Diagnostic email sent, status: {response.status_code}")
-        return {
-            "sent": True,
-            "status_code": response.status_code,
-            "from_email": from_email,
-            "to_email": from_email,
-            "note": "202 = SendGrid accepted it for delivery"
-        }
-    except Exception as e:
-        body = getattr(e, 'body', None)
-        print(f"❌ Diagnostic email failed: {str(e)} | body: {body}")
-        return {
-            "sent": False,
-            "error": str(e),
-            "sendgrid_body": str(body),
-            "from_email": from_email
-        }
+    result["provider"] = provider
+    result["from_email"] = _from_email()
+    result["to_email"] = _from_email()
+    if result.get("sent"):
+        result["note"] = "Provider accepted it for delivery — check the inbox (and spam folder)"
+    return result
 
 def send_referrer_notification(referrer_email, referrer_name, new_user_name):
     """Notify referrer that someone used their code"""
-    sg = get_sendgrid_client()
-    if not sg:
+    if not email_provider():
         return
     
     html_content = f"""
@@ -213,16 +269,8 @@ def send_referrer_notification(referrer_email, referrer_name, new_user_name):
     </div>
     """
     
-    message = Mail(
-        from_email=os.getenv("FROM_EMAIL", "askdave755@gmail.com"),
-        to_emails=referrer_email,
-        subject="Someone Used Your DreamDecode Blessing Code",
-        html_content=html_content
+    return send_email(
+        referrer_email,
+        "Someone Used Your DreamDecode Blessing Code",
+        html_content
     )
-    
-    try:
-        response = sg.send(message)
-        print(f"✅ Referrer notification sent to {referrer_email}")
-    except Exception as e:
-        body = getattr(e, 'body', None)
-        print(f"❌ Referrer notification failed: {str(e)} | body: {body}")
