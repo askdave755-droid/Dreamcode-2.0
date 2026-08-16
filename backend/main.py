@@ -58,8 +58,17 @@ class PaymentVerify(BaseModel):
     session_id: str
     dream_id: str
 
-# Initialize OpenAI
-client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# OpenAI client — lazy init so a missing key never crashes startup
+_openai_client = None
+
+def get_openai_client():
+    global _openai_client
+    if _openai_client is None:
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise RuntimeError("OPENAI_API_KEY environment variable not set")
+        _openai_client = openai.OpenAI(api_key=api_key)
+    return _openai_client
 
 def generate_teaser(dream_data: dict):
     """Generate 2-sentence teaser using GPT-3.5"""
@@ -77,7 +86,7 @@ def generate_teaser(dream_data: dict):
     Write only the 2-sentence teaser, nothing else."""
     
     try:
-        response = client.chat.completions.create(
+        response = get_openai_client().chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.8,
@@ -124,7 +133,7 @@ def generate_full_report(dream_data: dict):
     Provide the JSON response."""
     
     try:
-        response = client.chat.completions.create(
+        response = get_openai_client().chat.completions.create(
             model="gpt-4-turbo-preview",
             messages=[
                 {"role": "system", "content": system_prompt},
@@ -391,7 +400,7 @@ async def download_pdf(dream_id: str, db: Session = Depends(get_db)):
 
 @app.get("/health")
 def health():
-    """Health check endpoint — reports DB connectivity for diagnostics"""
+    """Health check endpoint — reports DB + config status for diagnostics"""
     db_status = "not_configured"
     if engine is not None:
         try:
@@ -403,6 +412,10 @@ def health():
     return {
         "status": "ok",
         "database": db_status,
+        "openai_key": "set" if os.getenv("OPENAI_API_KEY") else "MISSING",
+        "stripe_key": "set" if os.getenv("STRIPE_SECRET_KEY") else "MISSING",
+        "sendgrid_key": "set" if os.getenv("SENDGRID_API_KEY") else "MISSING",
+        "frontend_url": os.getenv("FRONTEND_URL", "MISSING"),
         "hebrew_year": get_hebrew_year(),
         "timestamp": datetime.utcnow().isoformat()
     }
