@@ -12,11 +12,12 @@ def get_sendgrid_client():
     return SendGridAPIClient(api_key)
 
 def send_dream_email(to_email, name, report, pdf_bytes, referral_code):
-    """Send dream interpretation email with PDF attachment"""
+    """Send dream interpretation email with PDF attachment.
+    Returns a result dict so callers (and logs) can see exactly what SendGrid said."""
     sg = get_sendgrid_client()
     if not sg:
         print(f"Skipping email to {to_email} - SendGrid not configured")
-        return
+        return {"sent": False, "error": "SENDGRID_API_KEY not set"}
     
     # Build email content
     interpretations_html = ""
@@ -125,8 +126,10 @@ def send_dream_email(to_email, name, report, pdf_bytes, referral_code):
     </div>
     """
     
+    from_email = os.getenv("FROM_EMAIL", "askdave755@gmail.com")
+    
     message = Mail(
-        from_email=os.getenv("FROM_EMAIL", "askdave755@gmail.com"),
+        from_email=from_email,
         to_emails=to_email,
         subject="Your Biblical Dream Interpretation is Ready",
         html_content=html_content
@@ -145,8 +148,54 @@ def send_dream_email(to_email, name, report, pdf_bytes, referral_code):
     try:
         response = sg.send(message)
         print(f"✅ Email sent to {to_email}, status: {response.status_code}")
+        return {"sent": True, "status_code": response.status_code}
     except Exception as e:
-        print(f"❌ Email failed to {to_email}: {str(e)}")
+        # SendGrid errors carry the response body — that body is the real diagnosis
+        body = getattr(e, 'body', None)
+        print(f"❌ Email failed to {to_email}: {str(e)} | body: {body}")
+        return {"sent": False, "error": str(e), "sendgrid_body": str(body)}
+
+def send_test_email():
+    """Diagnostic: send a test email to the app's own FROM_EMAIL and report
+    exactly what SendGrid returned (status code or error body)."""
+    sg = get_sendgrid_client()
+    if not sg:
+        return {"sent": False, "error": "SENDGRID_API_KEY not set"}
+    
+    from_email = os.getenv("FROM_EMAIL", "askdave755@gmail.com")
+    
+    message = Mail(
+        from_email=from_email,
+        to_emails=from_email,
+        subject="DreamDecode Email Diagnostic",
+        html_content="""
+        <div style="font-family: Georgia, serif; max-width: 600px; margin: 0 auto; color: #333;">
+            <h2 style="color: #D4AF37;">Email Pipeline Working</h2>
+            <p>If you're reading this, SendGrid accepted and delivered the message.</p>
+            <p>The full report pipeline (interpretation + symbol dictionary + PDF) uses this same path.</p>
+        </div>
+        """
+    )
+    
+    try:
+        response = sg.send(message)
+        print(f"✅ Diagnostic email sent, status: {response.status_code}")
+        return {
+            "sent": True,
+            "status_code": response.status_code,
+            "from_email": from_email,
+            "to_email": from_email,
+            "note": "202 = SendGrid accepted it for delivery"
+        }
+    except Exception as e:
+        body = getattr(e, 'body', None)
+        print(f"❌ Diagnostic email failed: {str(e)} | body: {body}")
+        return {
+            "sent": False,
+            "error": str(e),
+            "sendgrid_body": str(body),
+            "from_email": from_email
+        }
 
 def send_referrer_notification(referrer_email, referrer_name, new_user_name):
     """Notify referrer that someone used their code"""
@@ -175,4 +224,5 @@ def send_referrer_notification(referrer_email, referrer_name, new_user_name):
         response = sg.send(message)
         print(f"✅ Referrer notification sent to {referrer_email}")
     except Exception as e:
-        print(f"❌ Referrer notification failed: {str(e)}")
+        body = getattr(e, 'body', None)
+        print(f"❌ Referrer notification failed: {str(e)} | body: {body}")
