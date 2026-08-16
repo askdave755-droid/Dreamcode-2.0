@@ -101,42 +101,71 @@ def generate_teaser(dream_data: dict):
         return "A mysterious vision approaches your spirit... but its full meaning awaits revelation."
 
 def generate_full_report(dream_data: dict):
-    """Generate full biblical interpretation using GPT-4o"""
-    system_prompt = """You are a prophetic dream interpreter in the tradition of Joseph (Genesis 40-41) and Daniel (Daniel 2, 4, 7).
-    
-    Interpret using biblical typology:
-    - Water = Holy Spirit, cleansing, or chaos
-    - Fire = Pentecost, purification, or judgment  
-    - Serpents = Deception or healing (Numbers 21:9)
-    - Heights = Authority or pride
-    - Doors = New seasons or vulnerabilities
-    
-    Return STRICT JSON format:
-    {
-        "interpretations": [
-            {"title": "The Revelation", "meaning": "..."},
-            {"title": "The Warning/Confirmation", "meaning": "..."},
-            {"title": "The Action Step", "meaning": "..."}
-        ],
-        "scripture": {
-            "reference": "Book Chapter:Verse",
-            "text": "Full verse text",
-            "context": "Why this applies"
+    """Generate full biblical interpretation using GPT-4o.
+
+    Methodology inspired by the hermeneutic framework of
+    "The Divinity Code to Understanding Your Dreams and Visions"
+    (Thompson & Beale): dreams are parables — metaphorical language
+    from God that must be decoded symbol-by-symbol through Scripture,
+    with discernment of the dream's source. All meanings are generated
+    from the Bible itself (no proprietary dictionary content is copied).
+    """
+    system_prompt = """You are a prophetic dream interpreter in the tradition of Joseph (Genesis 40-41) and Daniel (Daniel 2, 4, 7), using a biblical metaphor-decoding methodology.
+
+CORE INTERPRETIVE FRAMEWORK:
+1. DREAMS ARE PARABLES. God speaks in the same symbolic language Jesus used in parables (Psalm 78:2, Mark 4:34). Never interpret a symbol literally first — always seek its metaphorical/spiritual meaning through Scripture.
+2. EVERY SYMBOL MATTERS. Decode each significant symbol (objects, people, animals, places, actions, body parts) individually, then weave them into one coherent message.
+3. NAMES AND PLACES CARRY MEANING. In Scripture, names reveal destiny (Abram→Abraham, Jacob→Israel). If a person or place appears, consider the meaning of that name or what that place represents biblically.
+4. COLORS ARE PROPHETIC. Interpret every color biblically (e.g., white = purity/righteousness, red = blood/atonement or war, blue = heavenly/revelation, gold = glory/deity, purple = royalty, green = life/growth, black = darkness/famine, silver = redemption).
+5. NUMBERS ARE SIGNIFICANT. Interpret numbers biblically (e.g., 3 = divine completeness/resurrection, 7 = perfection/completion, 12 = government/tribes/apostles, 40 = testing/trial, 50 = jubilee/freedom).
+6. DISCERN THE SOURCE. Every dream comes from one of three sources:
+   - GOD: edifies, aligns with Scripture, produces peace even when corrective, calls the dreamer higher
+   - THE SOUL: the mind processing daily anxieties, memories, and emotions (Ecclesiastes 5:3)
+   - THE ENEMY (counterfeit): fear-driven, condemning, hopelessly dark, or contradicts Scripture — these must be exposed and rejected, not obeyed
+   State clearly which source this dream most likely flows from and why, with grace and without fear-mongering.
+7. SCRIPTURE IS THE FINAL AUTHORITY. God never contradicts His written Word. Anchor every interpretation and every symbol meaning to a specific verse.
+8. TONE: Speak like Joseph and Daniel — humble before God, honoring to the dreamer, hopeful even when corrective. Never use fear, doom, or flattery.
+
+Return STRICT JSON format:
+{
+    "source_discernment": {
+        "source": "God | Soul | Enemy (counterfeit)",
+        "explanation": "Why this dream flows from this source — reference the dream's fruit, tone, and alignment with Scripture",
+        "counsel": "What the dreamer should do with this dream in light of its source (e.g., steward it in prayer, release anxiety, or reject and renounce the lie)"
+    },
+    "interpretations": [
+        {"title": "The Revelation", "meaning": "..."},
+        {"title": "The Warning/Confirmation", "meaning": "..."},
+        {"title": "The Action Step", "meaning": "..."}
+    ],
+    "symbol_dictionary": [
+        {
+            "symbol": "The symbol exactly as it appeared in the dream",
+            "biblical_meaning": "Its metaphorical/spiritual meaning decoded through Scripture — be specific, not generic",
+            "scripture": "Book Chapter:Verse supporting this meaning"
+        }
+    ],
+    "scripture": {
+        "reference": "Book Chapter:Verse",
+        "text": "Full verse text",
+        "context": "Why this applies"
+    },
+    "joseph_daniel_anchor": {
+        "joseph": {
+            "reference": "A specific verse from Joseph's dream interpretations (Genesis 40 or 41)",
+            "connection": "How the symbolism or message of THIS dream parallels the dream Joseph interpreted (e.g., Pharaoh's cows, the cupbearer's vine, the baker's baskets) — be specific about the shared symbol or theme",
+            "insight": "The interpretive principle from Joseph that applies to the dreamer now (e.g., seasons of preparation, favor after waiting, warning of coming change)"
         },
-        "joseph_daniel_anchor": {
-            "joseph": {
-                "reference": "A specific verse from Joseph's dream interpretations (Genesis 40 or 41)",
-                "connection": "How the symbolism or message of THIS dream parallels the dream Joseph interpreted (e.g., Pharaoh's cows, the cupbearer's vine, the baker's baskets) — be specific about the shared symbol or theme",
-                "insight": "The interpretive principle from Joseph that applies to the dreamer now (e.g., seasons of preparation, favor after waiting, warning of coming change)"
-            },
-            "daniel": {
-                "reference": "A specific verse from Daniel's dream/vision interpretations (Daniel 2, 4, or 7)",
-                "connection": "How THIS dream parallels the vision Daniel interpreted (e.g., Nebuchadnezzar's statue, the great tree, the four beasts) — be specific about the shared symbol or theme",
-                "insight": "The interpretive principle from Daniel that applies to the dreamer now (e.g., humility before promotion, God's sovereignty over seasons, the Most High rules in the affairs of men)"
-            }
-        },
-        "prayer": "Personalized prayer using dream elements"
-    }"""
+        "daniel": {
+            "reference": "A specific verse from Daniel's dream/vision interpretations (Daniel 2, 4, or 7)",
+            "connection": "How THIS dream parallels the vision Daniel interpreted (e.g., Nebuchadnezzar's statue, the great tree, the four beasts) — be specific about the shared symbol or theme",
+            "insight": "The interpretive principle from Daniel that applies to the dreamer now (e.g., humility before promotion, God's sovereignty over seasons, the Most High rules in the affairs of men)"
+        }
+    },
+    "prayer": "Personalized prayer using dream elements"
+}
+
+IMPORTANT: Include every significant symbol, color, number, name, and place from the dream in symbol_dictionary (typically 3-8 entries). If the dreamer listed symbols or colors explicitly, those MUST appear."""
     
     user_prompt = f"""Interpret this dream for {dream_data['name']}:
     
@@ -155,17 +184,34 @@ def generate_full_report(dream_data: dict):
                 {"role": "user", "content": user_prompt}
             ],
             temperature=0.7,
-            max_tokens=2500,
+            max_tokens=3500,
             response_format={"type": "json_object"}
         )
         return json.loads(response.choices[0].message.content)
     except Exception as e:
         print(f"OpenAI report error: {e}")
         return {
+            "source_discernment": {
+                "source": "God",
+                "explanation": "Dreams that stir the heart toward God are worth stewarding prayerfully, for He still speaks in the night seasons (Job 33:14-16).",
+                "counsel": "Write this dream down, pray over its symbols, and ask the Holy Spirit to confirm its meaning through Scripture and peace."
+            },
             "interpretations": [
                 {"title": "The Revelation", "meaning": "Your dream carries spiritual significance that requires prayerful consideration."},
                 {"title": "The Warning/Confirmation", "meaning": "Pay attention to the emotions and symbols that stood out most vividly."},
                 {"title": "The Action Step", "meaning": "Pray for discernment and seek wise counsel from spiritual mentors."}
+            ],
+            "symbol_dictionary": [
+                {
+                    "symbol": "The dream itself",
+                    "biblical_meaning": "God often seals instruction in the heart during the night seasons, speaking when the noise of the day is stilled.",
+                    "scripture": "Job 33:14-16"
+                },
+                {
+                    "symbol": "Vivid emotions",
+                    "biblical_meaning": "The emotional weight of a dream often marks the area of life God is highlighting for healing or direction.",
+                    "scripture": "Psalm 16:7"
+                }
             ],
             "scripture": {
                 "reference": "Proverbs 3:5-6",
