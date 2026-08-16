@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 from database import get_db, engine
 from models import Base, Dream
 from pdf_generator import generate_dream_pdf, get_hebrew_year
-from email_service import send_dream_email, send_referrer_notification, send_test_email
+from email_service import send_dream_email, send_referrer_notification, send_test_email, email_provider
 
 load_dotenv()
 
@@ -536,11 +536,12 @@ async def download_pdf(dream_id: str, db: Session = Depends(get_db)):
 
 @app.get("/api/test-email")
 def test_email():
-    """Diagnostic: send a test email via SendGrid to the app's own FROM_EMAIL
-    and return exactly what SendGrid said. Safe from abuse — it can only ever
-    mail the sender address itself."""
+    """Diagnostic: send a test email via the active provider (Brevo or
+    SendGrid) to the app's own FROM_EMAIL and return exactly what the
+    provider said. Safe from abuse — it can only ever mail the sender
+    address itself."""
     result = send_test_email()
-    result["sendgrid_key"] = "set" if os.getenv("SENDGRID_API_KEY") else "MISSING"
+    result["email_provider"] = email_provider() or "none"
     return result
 
 @app.get("/health")
@@ -559,7 +560,9 @@ def health():
         "database": db_status,
         "openai_key": "set" if os.getenv("OPENAI_API_KEY") else "MISSING",
         "stripe_key": "set" if os.getenv("STRIPE_SECRET_KEY") else "MISSING",
-        "sendgrid_key": "set" if os.getenv("SENDGRID_API_KEY") else "MISSING",
+        "sendgrid_key": "set" if os.getenv("SENDGRID_API_KEY") else "not_set",
+        "brevo_key": "set" if os.getenv("BREVO_API_KEY") else "not_set",
+        "email_provider": email_provider() or "none",
         "frontend_url": os.getenv("FRONTEND_URL", "MISSING"),
         "hebrew_year": get_hebrew_year(),
         "timestamp": datetime.utcnow().isoformat()
