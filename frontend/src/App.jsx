@@ -296,7 +296,7 @@ function App() {
               </button>
               
               <p className="text-center text-xs text-amber-200/40">
-                100% Free • Full revelation + PDF report included
+                100% Free • Full revelation + symbol dictionary + PDF report included
               </p>
             </form>
           </div>
@@ -321,6 +321,14 @@ function App() {
               <div className="bg-slate-900/30 p-6 rounded-lg border border-amber-900/20 space-y-3">
                 <div className="flex justify-between text-sm text-amber-200/60 items-center">
                   <span className="flex items-center gap-2">✨ Three Revelations</span>
+                  <span className="text-amber-400">✓</span>
+                </div>
+                <div className="flex justify-between text-sm text-amber-200/60 items-center">
+                  <span className="flex items-center gap-2">🔍 Dream Symbol Dictionary</span>
+                  <span className="text-amber-400">✓</span>
+                </div>
+                <div className="flex justify-between text-sm text-amber-200/60 items-center">
+                  <span className="flex items-center gap-2">🕊️ Source Discernment</span>
                   <span className="text-amber-400">✓</span>
                 </div>
                 <div className="flex justify-between text-sm text-amber-200/60 items-center">
@@ -387,6 +395,38 @@ function App() {
                   <p className="text-amber-100/90 leading-relaxed text-lg">{interp.meaning}</p>
                 </div>
               ))}
+
+              {/* Dream Symbol Dictionary */}
+              {report.symbol_dictionary?.length > 0 && (
+                <div className="bg-slate-900/50 p-6 rounded-lg border border-amber-900/40">
+                  <h3 className="text-lg text-amber-400 font-cinzel text-center mb-1">Dream Symbol Dictionary</h3>
+                  <p className="text-amber-200/50 text-xs text-center mb-5 italic">
+                    Every symbol decoded through the language of Scripture
+                  </p>
+                  <div className="space-y-4">
+                    {report.symbol_dictionary.map((entry, idx) => (
+                      <div key={idx} className="border-l-4 border-amber-700 pl-4 py-1 space-y-1">
+                        <h4 className="text-amber-300 font-cinzel capitalize">{entry.symbol}</h4>
+                        <p className="text-amber-100/90 leading-relaxed">{entry.biblical_meaning}</p>
+                        <p className="text-amber-600 font-bold text-sm font-cinzel">{entry.scripture}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Source Discernment */}
+              {report.source_discernment && (
+                <div className="bg-amber-950/20 p-6 rounded-lg border border-amber-700/30 space-y-3">
+                  <h3 className="text-lg text-amber-400 font-cinzel text-center">🕊️ Source Discernment</h3>
+                  <p className="text-center">
+                    <span className="text-amber-200/60 text-sm">This dream most likely flows from: </span>
+                    <span className="text-amber-300 font-bold font-cinzel">{report.source_discernment.source}</span>
+                  </p>
+                  <p className="text-amber-100/90 leading-relaxed">{report.source_discernment.explanation}</p>
+                  <p className="text-amber-200/70 italic border-t border-amber-900/30 pt-3">{report.source_discernment.counsel}</p>
+                </div>
+              )}
 
               <div className="bg-amber-950/30 p-6 rounded-lg border border-amber-600/30 text-center">
                 <h3 className="text-lg text-amber-400 font-cinzel mb-4">Scriptural Anchor</h3>
