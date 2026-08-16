@@ -70,12 +70,35 @@ def generate_dream_pdf(name, report_data):
     # Scripture
     if 'scripture' in report_data:
         elements.append(Spacer(1, 0.2*inch))
-        elements.append(Paragraph("Scriptural Foundation", heading_style))
+        elements.append(Paragraph("Scriptural Anchor", heading_style))
         
         scripture = report_data['scripture']
         elements.append(Paragraph(f"<i>{scripture.get('text', '')}</i>", normal_style))
         elements.append(Paragraph(f"<b>{scripture.get('reference', '')}</b>", styles['Normal']))
         elements.append(Paragraph(scripture.get('context', ''), styles['Normal']))
+    
+    # Joseph & Daniel Anchor
+    anchor = report_data.get('joseph_daniel_anchor')
+    if anchor:
+        elements.append(Spacer(1, 0.2*inch))
+        elements.append(Paragraph("The Joseph & Daniel Anchor", heading_style))
+        
+        joseph = anchor.get('joseph', {})
+        if joseph:
+            elements.append(Paragraph("<b>Joseph — The Interpreter of Pharaoh's Dreams</b>", styles['Normal']))
+            elements.append(Spacer(1, 0.05*inch))
+            elements.append(Paragraph(f"<i>{joseph.get('reference', '')}</i>", normal_style))
+            elements.append(Paragraph(joseph.get('connection', ''), normal_style))
+            elements.append(Paragraph(f"<b>Insight:</b> {joseph.get('insight', '')}", normal_style))
+            elements.append(Spacer(1, 0.1*inch))
+        
+        daniel = anchor.get('daniel', {})
+        if daniel:
+            elements.append(Paragraph("<b>Daniel — The Revealer of Mysteries</b>", styles['Normal']))
+            elements.append(Spacer(1, 0.05*inch))
+            elements.append(Paragraph(f"<i>{daniel.get('reference', '')}</i>", normal_style))
+            elements.append(Paragraph(daniel.get('connection', ''), normal_style))
+            elements.append(Paragraph(f"<b>Insight:</b> {daniel.get('insight', '')}", normal_style))
     
     # Prayer
     if 'prayer' in report_data:
