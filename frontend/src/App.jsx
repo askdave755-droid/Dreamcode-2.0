@@ -24,7 +24,6 @@ function App() {
   
   const [giftMode, setGiftMode] = useState(false);
   const [giftInfo, setGiftInfo] = useState(null);
-  const [price, setPrice] = useState(17.00);
 
   const emotions = ['Fear', 'Peace', 'Urgency', 'Joy', 'Confusion', 'Awe', 'Warning', 'Love'];
 
@@ -32,7 +31,6 @@ function App() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const code = params.get('code');
-    const sessionId = params.get('session_id');
     const dId = params.get('dream_id');
     
     if (code) {
@@ -41,10 +39,9 @@ function App() {
       fetchGiftInfo(code);
     }
     
-    if (sessionId && dId) {
-      setStep('reveal');
+    // Legacy paid link support: treat as free reveal now
+    if (dId) {
       setDreamId(dId);
-      verifyPayment(sessionId, dId);
     }
   }, []);
 
@@ -54,7 +51,6 @@ function App() {
       if (!res.ok) throw new Error('Invalid referral code');
       const data = await res.json();
       setGiftInfo(data);
-      setPrice(8.50);
     } catch (error) {
       console.error('Gift info error:', error);
       setError('Invalid blessing code');
@@ -90,7 +86,6 @@ function App() {
       setDreamId(data.dream_id);
       setReferralCode(data.referral_code);
       setTeaser(data.teaser);
-      setPrice(data.price || 17.00);
       setStep('teaser');
       
     } catch (error) {
@@ -101,7 +96,7 @@ function App() {
     }
   };
 
-  const handlePayment = async () => {
+  const handleFreeReveal = async () => {
     if (!dreamId) {
       setError('Dream ID is missing. Please refresh and try again.');
       return;
@@ -111,7 +106,7 @@ function App() {
     setError(null);
     
     try {
-      const res = await fetch(`${API_URL}/api/create-checkout-session`, {
+      const res = await fetch(`${API_URL}/api/get-full-report`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -122,57 +117,21 @@ function App() {
       
       if (!res.ok) {
         const errorData = await res.json();
-        throw new Error(errorData.detail || `Payment failed (${res.status})`);
+        throw new Error(errorData.detail || `Revelation failed (${res.status})`);
       }
       
       const data = await res.json();
       
-      if (!data.url) {
-        throw new Error('No checkout URL received');
-      }
-      
-      window.location.href = data.url;
-      
-    } catch (error) {
-      console.error('Payment error:', error);
-      setError(error.message || 'Error creating payment session');
-      setLoading(false);
-    }
-  };
-
-  const verifyPayment = async (sessionId, dId) => {
-    setLoading(true);
-    setError(null);
-    
-    try {
-      const res = await fetch(`${API_URL}/api/verify-payment`, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify({ 
-          session_id: sessionId, 
-          dream_id: dId 
-        })
-      });
-      
-      if (!res.ok) {
-        const errorData = await res.json();
-        throw new Error(errorData.detail || 'Payment verification failed');
-      }
-      
-      const data = await res.json();
-      
-      if (data.status === 'paid' && data.report) {
+      if (data.report) {
         setReport(data.report);
+        setStep('reveal');
       } else {
-        setError('Payment not completed');
+        throw new Error('No report received');
       }
       
     } catch (error) {
-      console.error('Verification error:', error);
-      setError(error.message || 'Error verifying payment');
+      console.error('Reveal error:', error);
+      setError(error.message || 'Error generating your revelation');
     } finally {
       setLoading(false);
     }
@@ -220,7 +179,7 @@ function App() {
             DreamDecode
           </h1>
           <div className="text-xs text-amber-200/60 tracking-widest uppercase">
-            Biblical Interpretation
+            Free Biblical Interpretation
           </div>
         </div>
       </div>
@@ -239,8 +198,8 @@ function App() {
               "{giftInfo.message}"
             </p>
             <div className="bg-slate-950/50 inline-block px-4 py-2 rounded border border-amber-600/30">
-              <span className="text-amber-500 font-bold">50% OFF</span>
-              <span className="text-amber-200/60 text-sm ml-2">Applied automatically</span>
+              <span className="text-amber-500 font-bold">100% FREE</span>
+              <span className="text-amber-200/60 text-sm ml-2">Full revelation included</span>
             </div>
           </div>
         )}
@@ -337,7 +296,7 @@ function App() {
               </button>
               
               <p className="text-center text-xs text-amber-200/40">
-                Free preview • ${price.toFixed(2)} for full revelation
+                100% Free • Full revelation + PDF report included
               </p>
             </form>
           </div>
@@ -376,16 +335,10 @@ function App() {
                   <span className="flex items-center gap-2">📜 Beautiful PDF Report</span>
                   <span className="text-amber-400">✓</span>
                 </div>
-                {price < 17 && (
-                  <div className="flex justify-between text-sm text-green-400 items-center border-t border-amber-900/30 pt-2 mt-2">
-                    <span className="flex items-center gap-2">🕊️ Blessing Discount Applied</span>
-                    <span>-50%</span>
-                  </div>
-                )}
               </div>
 
               <div className="pt-4">
-                <div className="text-3xl font-cinzel text-amber-400 mb-2">${price.toFixed(2)}</div>
+                <div className="text-3xl font-cinzel text-amber-400 mb-2">FREE</div>
                 
                 {!dreamId && (
                   <div className="mb-4 p-2 bg-red-900/20 text-red-400 text-xs rounded">
@@ -394,11 +347,11 @@ function App() {
                 )}
                 
                 <button
-                  onClick={handlePayment}
+                  onClick={handleFreeReveal}
                   disabled={loading || !dreamId}
                   className="w-full bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-white font-bold py-4 px-6 rounded-lg shadow-lg shadow-amber-900/20 transition-all transform hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed font-cinzel tracking-wider text-lg"
                 >
-                  {loading ? 'Preparing the Revelation...' : 'Unlock Full Report'}
+                  {loading ? 'Receiving Your Revelation...' : 'Reveal Full Report — Free'}
                 </button>
                 
                 {dreamId && (
@@ -408,7 +361,7 @@ function App() {
                 )}
                 
                 <p className="text-xs text-amber-200/40 mt-3">
-                  Secure payment via Stripe • Instant delivery via email
+                  Always free • Instant delivery via email
                 </p>
               </div>
             </div>
@@ -469,7 +422,7 @@ function App() {
                   {shareLink}
                 </div>
                 <p className="text-xs text-amber-200/40 mt-2">
-                  Gift 50% off to friends • Track your impact
+                  Share the gift of free revelation with friends
                 </p>
               </div>
             </div>
