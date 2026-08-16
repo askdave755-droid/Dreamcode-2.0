@@ -1,6 +1,7 @@
 from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 from datetime import datetime
 import openai
 import stripe
@@ -18,8 +19,16 @@ from email_service import send_dream_email, send_referrer_notification
 
 load_dotenv()
 
-# Initialize database tables
-Base.metadata.create_all(bind=engine)
+# Initialize database tables (non-fatal if DB is temporarily unreachable —
+# the app must still boot so /health can report what's wrong)
+try:
+    if engine is not None:
+        Base.metadata.create_all(bind=engine)
+        print("✅ Database tables verified")
+    else:
+        print("⚠️ DATABASE_URL not set — skipping table creation")
+except Exception as e:
+    print(f"⚠️ Database init failed (app will still serve /health): {e}")
 
 app = FastAPI(title="DreamDecode API")
 
@@ -382,9 +391,18 @@ async def download_pdf(dream_id: str, db: Session = Depends(get_db)):
 
 @app.get("/health")
 def health():
-    """Health check endpoint"""
+    """Health check endpoint — reports DB connectivity for diagnostics"""
+    db_status = "not_configured"
+    if engine is not None:
+        try:
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+            db_status = "connected"
+        except Exception as e:
+            db_status = f"error: {str(e)[:200]}"
     return {
-        "status": "ok", 
+        "status": "ok",
+        "database": db_status,
         "hebrew_year": get_hebrew_year(),
         "timestamp": datetime.utcnow().isoformat()
     }
