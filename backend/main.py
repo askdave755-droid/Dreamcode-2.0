@@ -58,6 +58,9 @@ class PaymentVerify(BaseModel):
     session_id: str
     dream_id: str
 
+class FreeReportRequest(BaseModel):
+    dream_id: str
+
 # OpenAI client — lazy init so a missing key never crashes startup
 _openai_client = None
 
@@ -197,12 +200,12 @@ async def analyze_teaser(dream: DreamInput, db: Session = Depends(get_db)):
         "teaser": teaser_text,
         "hebrew_year": get_hebrew_year(),
         "discount_applied": True if referrer else False,
-        "price": 8.50 if referrer else 17.00
+        "price": 0.0  # FREE mode — full report costs nothing
     }
 
 @app.get("/api/referral/{code}")
 async def get_referral_info(code: str, db: Session = Depends(get_db)):
-    """Get referral information for discount display"""
+    """Get referral information for blessing display"""
     referrer = db.query(Dream).filter(Dream.referral_code == code).first()
     
     if not referrer:
@@ -211,10 +214,73 @@ async def get_referral_info(code: str, db: Session = Depends(get_db)):
     return {
         "referrer_name": referrer.name,
         "referrer_dream_preview": f"A blessed vision from {referrer.name}",
-        "discount_active": True,
-        "discount_percent": 50,
-        "message": f"Your friend {referrer.name} has blessed you with a 50% discount on your dream interpretation. Like the loaves and fishes, this blessing multiplies when shared."
+        "discount_active": False,
+        "discount_percent": 0,
+        "message": f"Your friend {referrer.name} has shared the gift of free dream interpretation with you. Like the loaves and fishes, this blessing multiplies when shared."
     }
+
+@app.post("/api/get-full-report")
+async def get_full_report(request: FreeReportRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    """FREE MODE: Generate and return the full report — no payment required"""
+    dream = db.query(Dream).filter(Dream.id == request.dream_id).first()
+    
+    if not dream:
+        raise HTTPException(status_code=404, detail="Dream not found")
+    
+    # Already generated — return cached version
+    if dream.interpretation:
+        return {
+            "status": "revealed",
+            "report": json.loads(dream.interpretation),
+            "message": "Report already generated"
+        }
+    
+    # Generate full report
+    print(f"🤖 Generating FREE report for: {dream.name}")
+    report = generate_full_report({
+        "name": dream.name,
+        "dream_text": dream.dream_text,
+        "emotion": dream.emotion,
+        "colors": dream.colors,
+        "symbols": dream.symbols
+    })
+    
+    # Generate PDF
+    pdf_bytes = generate_dream_pdf(dream.name, report)
+    
+    # Mark as unlocked (also enables PDF download endpoint)
+    dream.is_paid = True
+    dream.interpretation = json.dumps(report)
+    db.commit()
+    
+    # Send email asynchronously
+    background_tasks.add_task(
+        send_dream_email,
+        dream.email,
+        dream.name,
+        report,
+        pdf_bytes,
+        dream.referral_code
+    )
+    
+    # Notify referrer if applicable
+    if dream.referred_by:
+        referrer = db.query(Dream).filter(Dream.id == dream.referred_by).first()
+        if referrer:
+            background_tasks.add_task(
+                send_referrer_notification,
+                referrer.email,
+                referrer.name,
+                dream.name
+            )
+    
+    return {
+        "status": "revealed",
+        "report": report,
+        "message": "Your revelation has been emailed to you"
+    }
+
+# ---- Legacy paid endpoints (kept for old links / easy re-enable) ----
 
 @app.post("/api/create-checkout-session")
 async def create_checkout(request: CheckoutRequest, db: Session = Depends(get_db)):
