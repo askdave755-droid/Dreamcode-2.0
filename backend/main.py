@@ -87,16 +87,21 @@ def _clean_frontend_url():
     return frontend_url
 
 def _customer_has_active_subscription(email: str) -> bool:
-    """True if a Stripe customer with this email has an active/trialing subscription"""
-    customers = stripe.Customer.list(email=email, limit=1)
-    if not customers.data:
+    """True ONLY if this email has an active/trialing subscription to the
+    DreamDecode price itself (STRIPE_PRICE_ID). Other products in the same
+    Stripe account (e.g. DisputeTrack) must NOT unlock DreamDecode reports."""
+    price_id = os.getenv("STRIPE_PRICE_ID", "").strip()
+    if not price_id:
         return False
-    customer_id = customers.data[0].id
-    active = stripe.Subscription.list(customer=customer_id, status="active", limit=1)
-    if active.data:
-        return True
-    trialing = stripe.Subscription.list(customer=customer_id, status="trialing", limit=1)
-    return bool(trialing.data)
+    customers = stripe.Customer.list(email=email, limit=10)
+    for customer in customers.data:
+        for status in ("active", "trialing"):
+            subs = stripe.Subscription.list(customer=customer.id, status=status, limit=20)
+            for sub in subs.data:
+                for item in sub["items"]["data"]:
+                    if item["price"]["id"] == price_id:
+                        return True
+    return False
 
 def generate_teaser(dream_data: dict):
     """Generate 2-sentence teaser using GPT-4o-mini"""
@@ -321,7 +326,7 @@ async def get_full_report(request: FreeReportRequest, background_tasks: Backgrou
 
     A dream becomes is_paid when the dreamer subscribes via checkout
     (verified in /api/verify-payment) or when /api/create-checkout-session
-    finds an existing active subscription for their email.
+    finds an existing active DreamDecode subscription for their email.
     """
     dream = db.query(Dream).filter(Dream.id == request.dream_id).first()
     
@@ -389,7 +394,7 @@ async def get_full_report(request: FreeReportRequest, background_tasks: Backgrou
 @app.post("/api/create-checkout-session")
 async def create_checkout(request: CheckoutRequest, db: Session = Depends(get_db)):
     """Create a $4.99/mo subscription checkout — or unlock instantly if the
-    dreamer's email already has an active subscription (never double-charge)."""
+    dreamer's email already has an active DreamDecode subscription (never double-charge)."""
     stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
     price_id = os.getenv("STRIPE_PRICE_ID", "").strip()
     dream_id = request.dream_id
@@ -407,7 +412,7 @@ async def create_checkout(request: CheckoutRequest, db: Session = Depends(get_db
     
     frontend_url = _clean_frontend_url()
     
-    # Already subscribed under this email? Unlock without charging again.
+    # Already subscribed to DREAMDECODE under this email? Unlock without charging again.
     try:
         if _customer_has_active_subscription(dream.email):
             dream.is_paid = True
