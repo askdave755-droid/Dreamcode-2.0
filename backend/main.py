@@ -61,6 +61,9 @@ class PaymentVerify(BaseModel):
 class FreeReportRequest(BaseModel):
     dream_id: str
 
+class PortalRequest(BaseModel):
+    email: str
+
 # OpenAI client — lazy init so a missing key never crashes startup
 _openai_client = None
 
@@ -72,6 +75,28 @@ def get_openai_client():
             raise RuntimeError("OPENAI_API_KEY environment variable not set")
         _openai_client = openai.OpenAI(api_key=api_key)
     return _openai_client
+
+def _clean_frontend_url():
+    """Read + validate FRONTEND_URL, raising a clear error if misconfigured"""
+    raw_frontend_url = os.getenv("FRONTEND_URL", "")
+    if not raw_frontend_url:
+        raise HTTPException(status_code=500, detail="FRONTEND_URL not configured")
+    frontend_url = raw_frontend_url.strip().strip('"').strip("'").rstrip('/')
+    if not frontend_url.startswith(('http://', 'https://')):
+        raise HTTPException(status_code=500, detail=f"Invalid FRONTEND_URL format: {frontend_url}")
+    return frontend_url
+
+def _customer_has_active_subscription(email: str) -> bool:
+    """True if a Stripe customer with this email has an active/trialing subscription"""
+    customers = stripe.Customer.list(email=email, limit=1)
+    if not customers.data:
+        return False
+    customer_id = customers.data[0].id
+    active = stripe.Subscription.list(customer=customer_id, status="active", limit=1)
+    if active.data:
+        return True
+    trialing = stripe.Subscription.list(customer=customer_id, status="trialing", limit=1)
+    return bool(trialing.data)
 
 def generate_teaser(dream_data: dict):
     """Generate 2-sentence teaser using GPT-4o-mini"""
@@ -270,7 +295,8 @@ async def analyze_teaser(dream: DreamInput, db: Session = Depends(get_db)):
         "teaser": teaser_text,
         "hebrew_year": get_hebrew_year(),
         "discount_applied": True if referrer else False,
-        "price": 0.0  # FREE mode — full report costs nothing
+        "price": 4.99,
+        "subscription": True  # $4.99/mo unlocks unlimited full reports
     }
 
 @app.get("/api/referral/{code}")
@@ -286,16 +312,24 @@ async def get_referral_info(code: str, db: Session = Depends(get_db)):
         "referrer_dream_preview": f"A blessed vision from {referrer.name}",
         "discount_active": False,
         "discount_percent": 0,
-        "message": f"Your friend {referrer.name} has shared the gift of free dream interpretation with you. Like the loaves and fishes, this blessing multiplies when shared."
+        "message": f"Your friend {referrer.name} has shared the gift of dream interpretation with you. Like the loaves and fishes, this blessing multiplies when shared."
     }
 
 @app.post("/api/get-full-report")
 async def get_full_report(request: FreeReportRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
-    """FREE MODE: Generate and return the full report — no payment required"""
+    """Generate and return the full report — requires an active subscription.
+
+    A dream becomes is_paid when the dreamer subscribes via checkout
+    (verified in /api/verify-payment) or when /api/create-checkout-session
+    finds an existing active subscription for their email.
+    """
     dream = db.query(Dream).filter(Dream.id == request.dream_id).first()
     
     if not dream:
         raise HTTPException(status_code=404, detail="Dream not found")
+    
+    if not dream.is_paid:
+        raise HTTPException(status_code=402, detail="An active DreamDecode subscription ($4.99/mo) is required to reveal the full report.")
     
     # Already generated — return cached version
     if dream.interpretation:
@@ -306,7 +340,7 @@ async def get_full_report(request: FreeReportRequest, background_tasks: Backgrou
         }
     
     # Generate full report
-    print(f"🤖 Generating FREE report for: {dream.name}")
+    print(f"🤖 Generating report for: {dream.name}")
     report = generate_full_report({
         "name": dream.name,
         "dream_text": dream.dream_text,
@@ -350,12 +384,14 @@ async def get_full_report(request: FreeReportRequest, background_tasks: Backgrou
         "message": "Your revelation has been emailed to you"
     }
 
-# ---- Legacy paid endpoints (kept for old links / easy re-enable) ----
+# ---- Billing: $4.99/month subscription ----
 
 @app.post("/api/create-checkout-session")
 async def create_checkout(request: CheckoutRequest, db: Session = Depends(get_db)):
-    """Create Stripe checkout session with URL validation"""
+    """Create a $4.99/mo subscription checkout — or unlock instantly if the
+    dreamer's email already has an active subscription (never double-charge)."""
     stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
+    price_id = os.getenv("STRIPE_PRICE_ID", "").strip()
     dream_id = request.dream_id
     
     print(f"🔍 Checkout requested for dream_id: {dream_id}")
@@ -369,88 +405,74 @@ async def create_checkout(request: CheckoutRequest, db: Session = Depends(get_db
         print(f"❌ Dream not found: {dream_id}")
         raise HTTPException(status_code=404, detail="Dream not found")
     
-    print(f"✅ Found dream: {dream.email}, referred_by: {dream.referred_by}")
+    frontend_url = _clean_frontend_url()
     
-    # Get and clean FRONTEND_URL
-    raw_frontend_url = os.getenv("FRONTEND_URL", "")
-    print(f"Raw FRONTEND_URL: '{raw_frontend_url}'")
+    # Already subscribed under this email? Unlock without charging again.
+    try:
+        if _customer_has_active_subscription(dream.email):
+            dream.is_paid = True
+            db.commit()
+            print(f"✅ Existing subscriber — unlocked {dream_id} for {dream.email} with no new charge")
+            return {"already_subscribed": True, "dream_id": dream_id}
+    except Exception as e:
+        print(f"⚠️ Subscription lookup failed (continuing to checkout): {e}")
     
-    if not raw_frontend_url:
-        raise HTTPException(status_code=500, detail="FRONTEND_URL not configured")
+    if not price_id:
+        raise HTTPException(status_code=500, detail="STRIPE_PRICE_ID not configured — set the $4.99/mo price ID in Railway variables")
     
-    # Clean the URL - remove quotes, whitespace, trailing slashes
-    frontend_url = raw_frontend_url.strip().strip('"').strip("'").rstrip('/')
-    print(f"Cleaned FRONTEND_URL: '{frontend_url}'")
-    
-    # Validate URL format
-    if not frontend_url.startswith(('http://', 'https://')):
-        print(f"❌ Invalid URL format: {frontend_url}")
-        raise HTTPException(status_code=500, detail=f"Invalid FRONTEND_URL format: {frontend_url}")
-    
-    # Calculate price
-    amount = 850 if dream.referred_by else 1700  # $8.50 or $17.00 in cents
-    
-    # Build URLs carefully
-    success_path = f"/reveal?session_id={{CHECKOUT_SESSION_ID}}&dream_id={dream_id}"
-    cancel_path = "/cancel"
-    
-    success_url = f"{frontend_url}{success_path}"
-    cancel_url = f"{frontend_url}{cancel_path}"
+    success_url = f"{frontend_url}/?session_id={{CHECKOUT_SESSION_ID}}&dream_id={dream_id}"
+    cancel_url = f"{frontend_url}/?cancelled=1"
     
     print(f"Success URL: {success_url}")
-    print(f"Cancel URL: {cancel_url}")
     
     try:
-        # Create Stripe session
-        session_params = {
-            "payment_method_types": ['card'],
-            "line_items": [{
-                'price_data': {
-                    'currency': 'usd',
-                    'unit_amount': amount,
-                    'product_data': {
-                        'name': 'Complete Dream Revelation',
-                        'description': f'Biblical interpretation for {dream.name}',
-                    },
-                },
-                'quantity': 1,
-            }],
-            "mode": 'payment',
-            "success_url": success_url,
-            "cancel_url": cancel_url,
-            "customer_email": dream.email,
-        }
+        session = stripe.checkout.Session.create(
+            payment_method_types=['card'],
+            line_items=[{'price': price_id, 'quantity': 1}],
+            mode='subscription',
+            success_url=success_url,
+            cancel_url=cancel_url,
+            customer_email=dream.email,
+            metadata={"dream_id": dream_id},
+            subscription_data={"metadata": {"dream_id": dream_id}},
+        )
         
-        print(f"Creating Stripe session with params: {json.dumps(session_params, indent=2)}")
-        
-        session = stripe.checkout.Session.create(**session_params)
-        
-        print(f"✅ Stripe session created: {session.id}")
+        print(f"✅ Stripe subscription session created: {session.id}")
         
         return {
-            "url": session.url, 
-            "amount": amount / 100,
-            "session_id": session.id
+            "url": session.url,
+            "session_id": session.id,
+            "amount": 4.99,
+            "interval": "month"
         }
         
     except stripe.error.StripeError as e:
-        print(f"❌ Stripe API error: {str(e)}")
-        print(f"Error type: {type(e).__name__}")
-        raise HTTPException(status_code=400, detail=f"Stripe error: {str(e)}")
+        print(f"❌ Stripe API error: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=400, detail=f"Stripe error: {e}")
     except Exception as e:
-        print(f"❌ Unexpected error: {str(e)}")
-        print(f"Error type: {type(e).__name__}")
-        raise HTTPException(status_code=400, detail=f"Payment setup failed: {str(e)}")
+        print(f"❌ Unexpected error: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=400, detail=f"Payment setup failed: {e}")
 
 @app.post("/api/verify-payment")
 async def verify_payment(data: PaymentVerify, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
-    """Verify payment and generate full report"""
+    """Verify checkout (subscription or legacy one-time) and generate full report"""
     stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
     
     try:
         session = stripe.checkout.Session.retrieve(data.session_id)
         
-        if session.payment_status != "paid":
+        # Subscription checkouts confirm via the subscription's status;
+        # legacy one-time payments confirm via payment_status.
+        paid = False
+        if session.mode == "subscription":
+            if session.subscription:
+                subscription = stripe.Subscription.retrieve(session.subscription)
+                paid = subscription.status in ("active", "trialing")
+                print(f"Subscription {subscription.id} status: {subscription.status}")
+        else:
+            paid = session.payment_status == "paid"
+        
+        if not paid:
             return {"status": "unpaid"}
         
         dream = db.query(Dream).filter(Dream.id == data.dream_id).first()
@@ -515,6 +537,32 @@ async def verify_payment(data: PaymentVerify, background_tasks: BackgroundTasks,
         print(f"❌ Verification error: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
 
+@app.post("/api/create-portal-session")
+async def create_portal_session(request: PortalRequest):
+    """Open Stripe's customer portal so a subscriber can manage/cancel their plan"""
+    stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
+    
+    email = request.email.strip()
+    if not email:
+        raise HTTPException(status_code=400, detail="email is required")
+    
+    try:
+        customers = stripe.Customer.list(email=email, limit=1)
+        if not customers.data:
+            raise HTTPException(status_code=404, detail="No subscription found for that email")
+        
+        frontend_url = _clean_frontend_url()
+        session = stripe.billing_portal.Session.create(
+            customer=customers.data[0].id,
+            return_url=frontend_url,
+        )
+        return {"url": session.url}
+    except HTTPException:
+        raise
+    except stripe.error.StripeError as e:
+        print(f"❌ Portal error: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=400, detail=f"Stripe error: {e}")
+
 @app.get("/api/download-pdf/{dream_id}")
 async def download_pdf(dream_id: str, db: Session = Depends(get_db)):
     """Download generated PDF report"""
@@ -560,6 +608,7 @@ def health():
         "database": db_status,
         "openai_key": "set" if os.getenv("OPENAI_API_KEY") else "MISSING",
         "stripe_key": "set" if os.getenv("STRIPE_SECRET_KEY") else "MISSING",
+        "stripe_price": "set" if os.getenv("STRIPE_PRICE_ID") else "MISSING",
         "sendgrid_key": "set" if os.getenv("SENDGRID_API_KEY") else "not_set",
         "brevo_key": "set" if os.getenv("BREVO_API_KEY") else "not_set",
         "email_provider": email_provider() or "none",

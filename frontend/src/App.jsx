@@ -32,6 +32,7 @@ function App() {
     const params = new URLSearchParams(window.location.search);
     const code = params.get('code');
     const dId = params.get('dream_id');
+    const sessionId = params.get('session_id');
     
     if (code) {
       setGiftMode(true);
@@ -39,11 +40,70 @@ function App() {
       fetchGiftInfo(code);
     }
     
-    // Legacy paid link support: treat as free reveal now
     if (dId) {
       setDreamId(dId);
     }
+
+    // Returning from Stripe Checkout — verify subscription and reveal
+    if (sessionId && dId) {
+      verifySubscription(sessionId, dId);
+    } else if (dId) {
+      // Returning visitor with a dream link — reveal if already unlocked
+      tryAutoReveal(dId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const verifySubscription = async (sessionId, dId) => {
+    setStep('verifying');
+    setError(null);
+    try {
+      const res = await fetch(`${API_URL}/api/verify-payment`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({ session_id: sessionId, dream_id: dId })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Verification failed');
+      if (data.status === 'paid' && data.report) {
+        setReport(data.report);
+        setStep('reveal');
+        window.history.replaceState({}, '', window.location.pathname);
+      } else {
+        setError('Subscription not confirmed yet — if you just subscribed, wait a few seconds and refresh.');
+        setStep('input');
+      }
+    } catch (error) {
+      console.error('Verify error:', error);
+      setError(error.message || 'Error confirming your subscription');
+      setStep('input');
+    }
+  };
+
+  const tryAutoReveal = async (dId) => {
+    try {
+      const res = await fetch(`${API_URL}/api/get-full-report`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({ dream_id: dId })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.report) {
+          setReport(data.report);
+          setStep('reveal');
+        }
+      }
+    } catch (e) {
+      console.error('Auto-reveal skipped:', e);
+    }
+  };
 
   const fetchGiftInfo = async (code) => {
     try {
@@ -96,7 +156,51 @@ function App() {
     }
   };
 
-  const handleFreeReveal = async () => {
+  const handleSubscribe = async () => {
+    if (!dreamId) {
+      setError('Dream ID is missing. Please refresh and try again.');
+      return;
+    }
+    
+    setLoading(true);
+    setError(null);
+    
+    try {
+      const res = await fetch(`${API_URL}/api/create-checkout-session`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({ dream_id: dreamId })
+      });
+      
+      const data = await res.json();
+      
+      if (!res.ok) {
+        throw new Error(data.detail || `Checkout failed (${res.status})`);
+      }
+      
+      if (data.already_subscribed) {
+        // Active subscriber — unlock this dream without charging again
+        await handleReveal();
+        return;
+      }
+      
+      if (data.url) {
+        window.location.href = data.url;
+      } else {
+        throw new Error('No checkout URL received');
+      }
+      
+    } catch (error) {
+      console.error('Subscribe error:', error);
+      setError(error.message || 'Error starting checkout');
+      setLoading(false);
+    }
+  };
+
+  const handleReveal = async () => {
     if (!dreamId) {
       setError('Dream ID is missing. Please refresh and try again.');
       return;
@@ -134,6 +238,29 @@ function App() {
       setError(error.message || 'Error generating your revelation');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const manageSubscription = async () => {
+    const email = window.prompt('Enter the email you subscribed with:');
+    if (!email) return;
+    setError(null);
+    
+    try {
+      const res = await fetch(`${API_URL}/api/create-portal-session`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({ email: email.trim() })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Could not open billing portal');
+      window.location.href = data.url;
+    } catch (error) {
+      console.error('Portal error:', error);
+      setError(error.message || 'Error opening billing portal');
     }
   };
 
@@ -179,7 +306,7 @@ function App() {
             DreamDecode
           </h1>
           <div className="text-xs text-amber-200/60 tracking-widest uppercase">
-            Free Biblical Interpretation
+            Unlimited Revelations — $4.99/mo
           </div>
         </div>
       </div>
@@ -198,9 +325,18 @@ function App() {
               "{giftInfo.message}"
             </p>
             <div className="bg-slate-950/50 inline-block px-4 py-2 rounded border border-amber-600/30">
-              <span className="text-amber-500 font-bold">100% FREE</span>
-              <span className="text-amber-200/60 text-sm ml-2">Full revelation included</span>
+              <span className="text-amber-500 font-bold">$4.99/mo</span>
+              <span className="text-amber-200/60 text-sm ml-2">Unlimited full revelations</span>
             </div>
+          </div>
+        )}
+
+        {/* Verifying Step */}
+        {step === 'verifying' && (
+          <div className="text-center space-y-6 py-16 animate-fade-in">
+            <div className="text-5xl animate-pulse">🕊️</div>
+            <h2 className="text-2xl text-amber-100 font-cinzel">Confirming Your Subscription...</h2>
+            <p className="text-amber-200/60 italic">The Spirit is moving — preparing your revelation.</p>
           </div>
         )}
 
@@ -296,7 +432,7 @@ function App() {
               </button>
               
               <p className="text-center text-xs text-amber-200/40">
-                100% Free • Full revelation + symbol dictionary + PDF report included
+                Free teaser • Full revelation + symbol dictionary + PDF with $4.99/mo subscription • Cancel anytime
               </p>
             </form>
           </div>
@@ -350,7 +486,8 @@ function App() {
               </div>
 
               <div className="pt-4">
-                <div className="text-3xl font-cinzel text-amber-400 mb-2">FREE</div>
+                <div className="text-3xl font-cinzel text-amber-400 mb-2">$4.99<span className="text-lg text-amber-200/60">/month</span></div>
+                <p className="text-xs text-amber-200/50 mb-3">Unlimited dream revelations • Cancel anytime</p>
                 
                 {!dreamId && (
                   <div className="mb-4 p-2 bg-red-900/20 text-red-400 text-xs rounded">
@@ -359,11 +496,11 @@ function App() {
                 )}
                 
                 <button
-                  onClick={handleFreeReveal}
+                  onClick={handleSubscribe}
                   disabled={loading || !dreamId}
                   className="w-full bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-white font-bold py-4 px-6 rounded-lg shadow-lg shadow-amber-900/20 transition-all transform hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed font-cinzel tracking-wider text-lg"
                 >
-                  {loading ? 'Receiving Your Revelation...' : 'Reveal Full Report — Free'}
+                  {loading ? 'Opening Secure Checkout...' : 'Subscribe & Reveal — $4.99/mo'}
                 </button>
                 
                 {dreamId && (
@@ -373,7 +510,7 @@ function App() {
                 )}
                 
                 <p className="text-xs text-amber-200/40 mt-3">
-                  Always free • Instant delivery via email
+                  Secure checkout by Stripe • Instant delivery via email
                 </p>
               </div>
             </div>
@@ -491,12 +628,27 @@ function App() {
                   {shareLink}
                 </div>
                 <p className="text-xs text-amber-200/40 mt-2">
-                  Share the gift of free revelation with friends
+                  Share the gift of revelation with friends
                 </p>
               </div>
             </div>
           </div>
         )}
+      </div>
+
+      {/* Footer */}
+      <div className="border-t border-amber-900/30 mt-12">
+        <div className="max-w-2xl mx-auto px-6 py-6 text-center space-y-2">
+          <p className="text-xs text-amber-200/30">
+            DreamDecode — Biblical Dream Interpretation • $4.99/month, cancel anytime
+          </p>
+          <button
+            onClick={manageSubscription}
+            className="text-amber-200/40 text-xs underline hover:text-amber-200/70 transition-colors"
+          >
+            Manage or cancel your subscription
+          </button>
+        </div>
       </div>
     </div>
   );
