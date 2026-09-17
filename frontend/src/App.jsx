@@ -18,6 +18,7 @@ function App() {
   const [dreamId, setDreamId] = useState(null);
   const [referralCode, setReferralCode] = useState('');
   const [teaser, setTeaser] = useState('');
+  const [trialDays, setTrialDays] = useState(0);
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -146,6 +147,7 @@ function App() {
       setDreamId(data.dream_id);
       setReferralCode(data.referral_code);
       setTeaser(data.teaser);
+      setTrialDays(data.trial_days || 0);
       setStep('teaser');
       
     } catch (error) {
@@ -486,8 +488,17 @@ function App() {
               </div>
 
               <div className="pt-4">
-                <div className="text-3xl font-cinzel text-amber-400 mb-2">$4.99<span className="text-lg text-amber-200/60">/month</span></div>
-                <p className="text-xs text-amber-200/50 mb-3">Unlimited dream revelations • Cancel anytime</p>
+                {trialDays > 0 ? (
+                  <>
+                    <div className="text-3xl font-cinzel text-amber-400 mb-2">{trialDays} Days FREE</div>
+                    <p className="text-xs text-amber-200/50 mb-3">then $4.99/month • Unlimited dream revelations • Cancel anytime</p>
+                  </>
+                ) : (
+                  <>
+                    <div className="text-3xl font-cinzel text-amber-400 mb-2">$4.99<span className="text-lg text-amber-200/60">/month</span></div>
+                    <p className="text-xs text-amber-200/50 mb-3">Unlimited dream revelations • Cancel anytime</p>
+                  </>
+                )}
                 
                 {!dreamId && (
                   <div className="mb-4 p-2 bg-red-900/20 text-red-400 text-xs rounded">
@@ -500,7 +511,7 @@ function App() {
                   disabled={loading || !dreamId}
                   className="w-full bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-white font-bold py-4 px-6 rounded-lg shadow-lg shadow-amber-900/20 transition-all transform hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed font-cinzel tracking-wider text-lg"
                 >
-                  {loading ? 'Opening Secure Checkout...' : 'Subscribe & Reveal — $4.99/mo'}
+                  {loading ? 'Opening Secure Checkout...' : (trialDays > 0 ? `Start ${trialDays}-Day Free Trial & Reveal` : 'Subscribe & Reveal — $4.99/mo')}
                 </button>
                 
                 {dreamId && (
@@ -510,7 +521,9 @@ function App() {
                 )}
                 
                 <p className="text-xs text-amber-200/40 mt-3">
-                  Secure checkout by Stripe • Instant delivery via email
+                  {trialDays > 0
+                    ? `Card required • $0 charged today • First bill $4.99 on day ${trialDays + 1} unless you cancel`
+                    : 'Secure checkout by Stripe • Instant delivery via email'}
                 </p>
               </div>
             </div>
