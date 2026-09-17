@@ -86,6 +86,13 @@ def _clean_frontend_url():
         raise HTTPException(status_code=500, detail=f"Invalid FRONTEND_URL format: {frontend_url}")
     return frontend_url
 
+def _trial_days() -> int:
+    """Free-trial length from env (0 = no trial). Bad values fail safe to 0."""
+    try:
+        return max(0, int(os.getenv("TRIAL_DAYS", "0") or "0"))
+    except ValueError:
+        return 0
+
 def _customer_has_active_subscription(email: str) -> bool:
     """True ONLY if this email has an active/trialing subscription to the
     DreamDecode price itself (STRIPE_PRICE_ID). Other products in the same
@@ -301,7 +308,8 @@ async def analyze_teaser(dream: DreamInput, db: Session = Depends(get_db)):
         "hebrew_year": get_hebrew_year(),
         "discount_applied": True if referrer else False,
         "price": 4.99,
-        "subscription": True  # $4.99/mo unlocks unlimited full reports
+        "subscription": True,  # $4.99/mo unlocks unlimited full reports
+        "trial_days": _trial_days()  # >0 means checkout offers a free trial first
     }
 
 @app.get("/api/referral/{code}")
@@ -394,7 +402,8 @@ async def get_full_report(request: FreeReportRequest, background_tasks: Backgrou
 @app.post("/api/create-checkout-session")
 async def create_checkout(request: CheckoutRequest, db: Session = Depends(get_db)):
     """Create a $4.99/mo subscription checkout — or unlock instantly if the
-    dreamer's email already has an active DreamDecode subscription (never double-charge)."""
+    dreamer's email already has an active DreamDecode subscription (never double-charge).
+    Trial and intro-discount are configured via TRIAL_DAYS / TRIAL_COUPON_ID env vars."""
     stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
     price_id = os.getenv("STRIPE_PRICE_ID", "").strip()
     dream_id = request.dream_id
@@ -428,20 +437,36 @@ async def create_checkout(request: CheckoutRequest, db: Session = Depends(get_db
     success_url = f"{frontend_url}/?session_id={{CHECKOUT_SESSION_ID}}&dream_id={dream_id}"
     cancel_url = f"{frontend_url}/?cancelled=1"
     
-    print(f"Success URL: {success_url}")
+    # Trial / intro-discount config — change these in Railway variables, no redeploy needed:
+    #   TRIAL_DAYS=7         → card collected, $0 today, first bill after N days
+    #   TRIAL_COUPON_ID=...  → Stripe coupon ID auto-applied (e.g. 80% off once ≈ $1 first month)
+    trial_days = _trial_days()
+    trial_coupon = os.getenv("TRIAL_COUPON_ID", "").strip()
+    
+    subscription_data = {"metadata": {"dream_id": dream_id}}
+    if trial_days > 0:
+        subscription_data["trial_period_days"] = trial_days
+    
+    session_params = {
+        "payment_method_types": ['card'],
+        "line_items": [{'price': price_id, 'quantity': 1}],
+        "mode": 'subscription',
+        "success_url": success_url,
+        "cancel_url": cancel_url,
+        "customer_email": dream.email,
+        "metadata": {"dream_id": dream_id},
+        "subscription_data": subscription_data,
+    }
+    if trial_coupon:
+        # Stripe forbids discounts + allow_promotion_codes on the same session
+        session_params["discounts"] = [{"coupon": trial_coupon}]
+    else:
+        session_params["allow_promotion_codes"] = True
+    
+    print(f"Success URL: {success_url} | trial_days={trial_days} trial_coupon={'set' if trial_coupon else 'none'}")
     
     try:
-        session = stripe.checkout.Session.create(
-            payment_method_types=['card'],
-            line_items=[{'price': price_id, 'quantity': 1}],
-            mode='subscription',
-            allow_promotion_codes=True,
-            success_url=success_url,
-            cancel_url=cancel_url,
-            customer_email=dream.email,
-            metadata={"dream_id": dream_id},
-            subscription_data={"metadata": {"dream_id": dream_id}},
-        )
+        session = stripe.checkout.Session.create(**session_params)
         
         print(f"✅ Stripe subscription session created: {session.id}")
         
@@ -449,7 +474,8 @@ async def create_checkout(request: CheckoutRequest, db: Session = Depends(get_db
             "url": session.url,
             "session_id": session.id,
             "amount": 4.99,
-            "interval": "month"
+            "interval": "month",
+            "trial_days": trial_days
         }
         
     except stripe.error.StripeError as e:
@@ -615,6 +641,7 @@ def health():
         "openai_key": "set" if os.getenv("OPENAI_API_KEY") else "MISSING",
         "stripe_key": "set" if os.getenv("STRIPE_SECRET_KEY") else "MISSING",
         "stripe_price": "set" if os.getenv("STRIPE_PRICE_ID") else "MISSING",
+        "trial_days": _trial_days(),
         "sendgrid_key": "set" if os.getenv("SENDGRID_API_KEY") else "not_set",
         "brevo_key": "set" if os.getenv("BREVO_API_KEY") else "not_set",
         "email_provider": email_provider() or "none",
