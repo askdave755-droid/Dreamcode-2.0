@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#16233a" />
+  <title>Autopilot — admin help for trades</title>
+  <link rel="stylesheet" href="/static/app.css" />
+</head>
+<body>
+  <div id="boot" class="boot">
+    <div class="boot-mark">A</div>
+    <p>Loading your day…</p>
+  </div>
+
+  <main id="root" hidden></main>
+  <div id="toast" class="toast" hidden></div>
+  <div id="sheet" class="sheet-wrap" hidden>
+    <div class="sheet-backdrop" data-close-sheet></div>
+    <section class="sheet" role="dialog" aria-modal="true">
+      <div class="sheet-grab"></div>
+      <div id="sheet-body"></div>
+    </section>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

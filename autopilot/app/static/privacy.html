@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Privacy — Autopilot for Small Trades</title>
+  <style>
+    body { margin: 0; background: #f5f6f8; color: #141821; font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    main { max-width: 640px; margin: 0 auto; padding: 32px 20px 60px; }
+    h1 { font-size: 24px; letter-spacing: -.02em; }
+    h2 { font-size: 16px; margin-top: 26px; }
+    p, li { color: #374151; }
+    .tag { display: inline-block; background: #fff0e9; color: #c2410c; font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; padding: 4px 9px; border-radius: 99px; }
+    .card { background: #fff; border: 1px solid #e7e9ee; border-radius: 14px; padding: 16px; margin-top: 12px; }
+    a { color: #0e7c74; }
+    .muted { color: #6a7280; font-size: 12.5px; }
+  </style>
+</head>
+<body>
+<main>
+  <span class="tag">Template — review before launch</span>
+  <h1>Privacy policy</h1>
+  <p class="muted">Last updated: <span id="date"></span></p>
+
+  <div class="card">
+    <p><b>This is a working draft, not legal advice.</b> Have a Canadian privacy lawyer review it before you onboard a paying customer. Quebec businesses should also check Law 25 obligations (privacy officer, incident register, consent).</p>
+  </div>
+
+  <h2>Who we are</h2>
+  <p>Autopilot (“we”, “us”) provides phone answering, booking, invoicing, and text-message follow-up software to small trade businesses. Each business using Autopilot (“the business”) is the controller of its customer records; we process them on the business's behalf.</p>
+
+  <h2>What we collect</h2>
+  <ul>
+    <li><b>Callers:</b> name, phone number, service address, the service requested, preferred timing, call audio/transcript, and the summary generated from the call.</li>
+    <li><b>Customers:</b> invoice amounts, payment status, and text-message history including consent and opt-out records.</li>
+    <li><b>Business owners:</b> name, mobile number, business details, tax settings, and subscription status.</li>
+    <li><b>Technical:</b> basic request logs needed to operate and secure the service.</li>
+  </ul>
+  <p>We do not collect credit card numbers. Card payments are handled by Stripe; Interac e-Transfers are sent directly between the customer and the business.</p>
+
+  <h2>Why we collect it</h2>
+  <p>To answer calls, book and schedule work, issue invoices, collect payment, send reminders and review requests, rebook seasonal work, and meet tax and record-keeping obligations.</p>
+
+  <h2>AI disclosure and call recording</h2>
+  <p>Calls are answered by an AI assistant that identifies itself as an AI at the start of every call. Calls may be recorded and transcribed so the business can follow up accurately. Where a jurisdiction requires two-party consent for recording (for example, some calls involving parties in other provinces or the United States), the assistant must ask for consent before recording; configure your provider accordingly.</p>
+
+  <h2>Text messages and consent</h2>
+  <p>We send transactional texts (confirmations, reminders, invoices, receipts) to customers who provided their number for that purpose, and marketing-style texts (rebooking, review requests) in line with Canada's Anti-Spam Legislation. Every message includes an opt-out instruction, and opt-outs are recorded and honoured. Reply STOP to stop messages at any time.</p>
+
+  <h2>Service providers</h2>
+  <p>We use vetted processors to run the service: Twilio (SMS), Vapi or Bland (voice AI), Stripe (payments), OpenAI (language model), and our cloud hosting and database providers. Some may process data outside Quebec or Canada. We keep processor agreements and only share what each service needs.</p>
+
+  <h2>Retention</h2>
+  <p>Job and invoice records are kept as long as the business needs them for tax and warranty purposes (generally six years in Canada). Call recordings and transcripts are kept for a shorter period (default 90 days) unless the business chooses otherwise. Opt-out records are kept indefinitely so we do not text someone who asked us to stop.</p>
+
+  <h2>Your rights</h2>
+  <p>You can ask to see, correct, or delete personal information, or withdraw consent for texts. Contact the business you dealt with, or email the privacy contact below. We respond within 30 days. If you are not satisfied, you can contact the Office of the Privacy Commissioner of Canada or the Commission d'accès à l'information du Québec.</p>
+
+  <h2>Security</h2>
+  <p>Data is encrypted in transit. Access is limited to the business that owns the record, enforced by tenant-scoped queries. Credentials live in environment variables, not in code. Webhooks are signature-verified.</p>
+
+  <h2>Contact</h2>
+  <p>Privacy contact: <a href="mailto:privacy@example.com">privacy@example.com</a> — replace with a monitored address before launch.</p>
+</main>
+<script>document.getElementById('date').textContent = new Date().toLocaleDateString('en-CA', { year: 'numeric', month: 'long', day: 'numeric' });</script>
+</body>
+</html>

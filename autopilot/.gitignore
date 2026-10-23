@@ -1,0 +1,10 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+autopilot.db
+test_autopilot.db
+*.sqlite3
+.env
+.DS_Store
