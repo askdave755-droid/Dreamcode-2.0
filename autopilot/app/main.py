@@ -14,7 +14,7 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -24,7 +24,7 @@ from .db import engine, get_db, init_db
 from .plans import plan_list
 from .prompt import build_system_prompt
 from .routers import admin, auth, payments, sms, voice
-from .security import verify_cron_secret
+from .security import COOKIE_NAME, SESSION_MAX_AGE, make_session_token, verify_cron_secret
 from .services import scheduler
 
 logging.basicConfig(
@@ -155,19 +155,61 @@ def plans():
     return {"plans": plan_list()}
 
 
-@app.get("/", include_in_schema=False)
-def index():
+def _asset_version() -> str:
+    """Cache-buster so a stale app.js can never hide a UI change."""
+    newest = 0
+    for name in ("app.css", "app.js"):
+        path = STATIC_DIR / name
+        if path.exists():
+            newest = max(newest, int(path.stat().st_mtime))
+    return str(newest or 1)
+
+
+def _render_index() -> HTMLResponse:
     index_file = STATIC_DIR / "index.html"
     if not index_file.exists():
         return JSONResponse({"app": "Autopilot for Small Trades", "docs": "/docs"})
-    return FileResponse(index_file)
+    html = index_file.read_text(encoding="utf-8").replace("__ASSET_V__", _asset_version())
+    return HTMLResponse(
+        content=html,
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.get("/", include_in_schema=False)
+def index():
+    return _render_index()
+
+
+@app.get("/demo", include_in_schema=False)
+def demo_entry(db: Session = Depends(get_db)):
+    """Shareable demo link: signs into the seeded demo tenant and lands in the app."""
+    if not settings.demo_mode:
+        raise HTTPException(404, "Not found")
+    from . import models
+
+    business = (
+        db.query(models.Business).order_by(models.Business.created_at.asc()).first()
+    )
+    if business is None:
+        raise HTTPException(404, "No demo business seeded")
+
+    response = RedirectResponse("/", status_code=303)
+    response.set_cookie(
+        COOKIE_NAME,
+        make_session_token(business.id),
+        max_age=SESSION_MAX_AGE,
+        httponly=True,
+        samesite="lax",
+        secure=settings.environment == "production",
+    )
+    return response
 
 
 @app.exception_handler(404)
 async def not_found(request: Request, exc):
-    if request.url.path.startswith(("/api", "/webhooks", "/internal")):
+    if request.url.path.startswith(("/api", "/webhooks", "/internal", "/demo", "/pay/")):
         return JSONResponse({"detail": "Not found"}, status_code=404)
-    index_file = STATIC_DIR / "index.html"
-    if index_file.exists():
-        return FileResponse(index_file)
+    if (STATIC_DIR / "index.html").exists():
+        return _render_index()
     return JSONResponse({"detail": "Not found"}, status_code=404)

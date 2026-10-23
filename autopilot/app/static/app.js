@@ -113,10 +113,29 @@ async function bootApp() {
     await loadDashboard();
     renderApp();
   } catch {
-    renderAuth();
+    // Demo deployments land straight in the seeded business so there is
+    // nothing to hunt for. ?auth=1 still exposes the real sign-in screen.
+    if (!(await enterDemoIfAvailable())) renderAuth();
   } finally {
     boot.hidden = true;
     root.hidden = false;
+  }
+}
+
+async function enterDemoIfAvailable() {
+  try {
+    const params = new URLSearchParams(
+      (typeof window !== "undefined" && window.location.search) || ""
+    );
+    if (state.skipDemoAuto || params.get("auth") === "1") return false;
+    const result = await api("/api/auth/demo", { method: "POST" });
+    if (!result || !result.business) return false;
+    state.business = result.business;
+    await loadDashboard();
+    renderApp();
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -296,13 +315,16 @@ function renderApp() {
           <div class="biz">${esc(business.name)}</div>
           <div class="sub line-num">${esc(business.phone_number || "No line assigned yet")} · ${esc(business.city || "")}${business.province ? ", " + esc(business.province) : ""}</div>
         </div>
-        <span class="plan-chip ${business.plan_status !== "active" ? "warn" : ""}">${esc(planChip)}</span>
+        <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end">
+          ${business.demo_mode ? `<span class="plan-chip" style="background:rgba(255,107,53,.28);border-color:rgba(255,107,53,.55)">Demo</span>` : ""}
+          <span class="plan-chip ${business.plan_status !== "active" ? "warn" : ""}">${esc(planChip)}</span>
+        </div>
       </div>
       ${
         !business.phone_number
           ? `<div class="hero-note"><span>◍</span><span><strong>No business line yet.</strong> Add the dedicated number in <b>More → Business profile</b> so calls and texts can reach your assistant.</span></div>`
           : business.demo_mode
-          ? `<div class="hero-note"><span>◍</span><span><strong>Dry-run mode.</strong> Texts, calls, and payments are simulated until you add Twilio, Stripe, and Vapi keys.</span></div>`
+          ? `<div class="hero-note"><span>◍</span><span><strong>Demo business.</strong> Sample jobs, texts, and invoices. Nothing is sent and no card is charged.</span></div>`
           : outstanding
           ? `<div class="hero-note"><span>◍</span><span><strong>${money(outstanding)}</strong> is still outstanding. Chasers run automatically.</span></div>`
           : ""
@@ -985,6 +1007,8 @@ root.addEventListener("click", async (event) => {
         state.business = null;
         state.dash = null;
         state.authStep = "phone";
+        state.skipDemoAuto = true;
+        history.replaceState(null, "", "/?auth=1");
         renderAuth();
         return;
     }

@@ -412,3 +412,32 @@ def test_agent_prompt_endpoint_renders_business_details(client, business):
     assert "disclose" in body["system_prompt"].lower() or "AI assistant" in body["system_prompt"]
     assert body["assistant_payload"]["serverUrl"].endswith("/webhooks/vapi")
     assert body["assistant_payload"]["metadata"]["business_id"] == business.id
+
+
+def test_index_serves_cache_busted_assets(client):
+    response = client.get("/")
+    assert response.status_code == 200
+    assert "__ASSET_V__" not in response.text
+    assert "/static/app.js?v=" in response.text
+    assert "/static/app.css?v=" in response.text
+    assert response.headers.get("cache-control") == "no-store"
+
+
+def test_demo_link_signs_in_and_lands_in_the_app(client, business):
+    response = client.get("/demo", follow_redirects=False)
+    assert response.status_code == 303
+    assert response.headers["location"] == "/"
+    assert "autopilot_session" in response.headers.get("set-cookie", "")
+
+    # The cookie from /demo is enough to use the app.
+    me = client.get("/api/me")
+    assert me.status_code == 200
+    assert me.json()["demo_mode"] is True
+
+
+def test_demo_link_is_hidden_outside_demo_mode(client, monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "demo_mode", False)
+    assert client.get("/demo", follow_redirects=False).status_code == 404
+    assert client.post("/api/auth/demo").status_code == 404

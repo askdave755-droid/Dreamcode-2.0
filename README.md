@@ -19,8 +19,8 @@ imports from `backend/` or `frontend/`.
 cd autopilot
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-uvicorn app.main:app --port 8000     # open http://localhost:8000
-pytest -q                            # 42 tests
+uvicorn app.main:app --port 8000     # http://localhost:8000 (demo opens itself)
+pytest -q                            # 45 tests
 ```
 
 Start with [`autopilot/README.md`](autopilot/README.md).

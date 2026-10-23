@@ -43,7 +43,13 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8000
 ```
 
-Open <http://localhost:8000>. Click **Open the demo business** (or sign in as owner `(418) 555-0199`; the demo code is shown on screen). A demo snow-removal company in Saint-Georges, QC is seeded automatically.
+Open <http://localhost:8000>. In demo mode the app signs you straight into the seeded demo business — a snow-removal company in Saint-Georges, QC. Nothing to click, nothing to install.
+
+* `/demo` — shareable link that signs in and lands in the app.
+* `/?auth=1` — the real sign-in screen (phone + code). The demo owner is `(418) 555-0199` and the code is shown on screen.
+* `More → Sign out` returns to that sign-in screen.
+
+Set `DEMO_MODE=false` in production to disable the demo link and auto-entry.
 
 Try the whole loop:
 
@@ -62,7 +68,7 @@ curl -X POST localhost:8000/webhooks/twilio/sms \
 Run the tests:
 
 ```bash
-pytest -q          # 42 tests: tax, availability, booking, invoicing, commands, webhooks, tenancy
+pytest -q          # 45 tests: tax, availability, booking, invoicing, commands, webhooks, tenancy
 ```
 
 ## The job lifecycle
