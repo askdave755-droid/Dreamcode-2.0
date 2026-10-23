@@ -9,6 +9,11 @@ const PENDING_PREVIEW_KEY = 'dreamdecode_pending_preview';
 const SUBSCRIBER_EMAIL_KEY = 'dreamdecode_subscriber_email';
 const HAS_REFLECTED_KEY = 'dreamdecode_has_reflected';
 
+const getSpeechRecognitionCtor = () =>
+  typeof window !== 'undefined'
+    ? window.SpeechRecognition || window.webkitSpeechRecognition || null
+    : null;
+
 // Transparent sample showing both what's in the free preview and what unlocks
 // in the full $4.99/mo report — without claiming one symbol always means one thing.
 const SAMPLE = {
@@ -93,7 +98,119 @@ function App() {
   const dreamTextareaRef = useRef(null);
   const dreamFormRef = useRef(null);
 
+  // Built-in browser voice dictation (Web Speech API — $0 cost, no audio sent to our server)
+  const [speechSupported] = useState(() => Boolean(getSpeechRecognitionCtor()));
+  const [isListening, setIsListening] = useState(false);
+  const [voiceHint, setVoiceHint] = useState(null);
+  const recognitionRef = useRef(null);
+  const dictationBaseRef = useRef('');
+
   const feelings = ['Peace', 'Fear', 'Urgency', 'Joy', 'Confusion', 'Awe', 'Hope', 'Grief', 'Unease', 'Love'];
+
+  const stopDictation = ({ abort = false } = {}) => {
+    const rec = recognitionRef.current;
+    if (rec) {
+      recognitionRef.current = null;
+      try {
+        if (abort) {
+          rec.onresult = null;
+          rec.onerror = null;
+          rec.abort();
+        } else {
+          rec.stop();
+        }
+      } catch {}
+    }
+    setIsListening(false);
+  };
+
+  useEffect(() => {
+    return () => stopDictation({ abort: true });
+  }, []);
+
+  const toggleDictation = () => {
+    if (!speechSupported) {
+      setVoiceHint('Voice dictation isn’t supported in this browser — try Safari or Chrome, or tap the 🎤 microphone key on your phone keyboard.');
+      return;
+    }
+
+    if (isListening) {
+      stopDictation();
+      setVoiceHint(null);
+      return;
+    }
+
+    const SpeechRecognition = getSpeechRecognitionCtor();
+    if (!SpeechRecognition) return;
+
+    setError(null);
+    setVoiceHint(null);
+
+    // Keep any existing text so speaking appends naturally after a space
+    dictationBaseRef.current = formData.dream_text.trim();
+
+    const recognition = new SpeechRecognition();
+    recognition.lang = (typeof navigator !== 'undefined' && navigator.language) || 'en-US';
+    recognition.continuous = true;
+    recognition.interimResults = true;
+
+    recognition.onstart = () => {
+      setIsListening(true);
+    };
+
+    recognition.onresult = (event) => {
+      const parts = [];
+      for (let i = 0; i < event.results.length; i++) {
+        const piece = (event.results[i][0]?.transcript || '').trim();
+        if (!piece) continue;
+        const prev = parts[parts.length - 1];
+        if (prev && piece.toLowerCase().startsWith(prev.toLowerCase())) {
+          // Guard against Android Chrome cumulative-transcript quirk
+          parts[parts.length - 1] = piece;
+        } else if (!prev || prev.toLowerCase() !== piece.toLowerCase()) {
+          parts.push(piece);
+        }
+      }
+      const spoken = parts.join(' ').replace(/\s+([,.!?;:])/g, '$1').trim();
+      if (!spoken) return;
+
+      const base = dictationBaseRef.current;
+      const combined = base ? `${base} ${spoken}` : spoken;
+      setFormData(prev => ({ ...prev, dream_text: combined }));
+    };
+
+    recognition.onerror = (event) => {
+      const code = event?.error;
+      if (code === 'aborted') {
+        // Intentional stop — no message needed
+      } else if (code === 'no-speech') {
+        setVoiceHint('Didn’t catch any speech — tap “Speak dream” whenever you’re ready.');
+      } else if (code === 'not-allowed' || code === 'service-not-allowed') {
+        setVoiceHint('Microphone permission was blocked. Allow mic access in your browser settings, or use the 🎤 key on your keyboard.');
+      } else if (code === 'audio-capture') {
+        setVoiceHint('No microphone was detected on this device.');
+      } else {
+        setVoiceHint('Voice dictation paused — tap “Speak more” to continue or type below.');
+      }
+      recognitionRef.current = null;
+      setIsListening(false);
+    };
+
+    recognition.onend = () => {
+      recognitionRef.current = null;
+      setIsListening(false);
+    };
+
+    try {
+      recognitionRef.current = recognition;
+      recognition.start();
+    } catch (err) {
+      console.error('SpeechRecognition start error:', err);
+      recognitionRef.current = null;
+      setIsListening(false);
+      setVoiceHint('Could not start voice dictation in this browser — try tapping the 🎤 key on your keyboard.');
+    }
+  };
 
   // Handle URL parameters & initial config check
   useEffect(() => {
@@ -245,6 +362,7 @@ function App() {
 
   const handleSubmitTeaser = async (e) => {
     e.preventDefault();
+    stopDictation();
     if (!formData.dream_text.trim()) {
       setError('Please describe your dream first — even a few sentences is enough.');
       return;
@@ -433,6 +551,8 @@ function App() {
   };
 
   const startOver = () => {
+    stopDictation({ abort: true });
+    setVoiceHint(null);
     setStep('input');
     setError(null);
     setInfoNotice(null);
@@ -549,7 +669,7 @@ function App() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => { setStep('sample'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+                  onClick={() => { stopDictation({ abort: true }); setStep('sample'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
                   className="flex-1 bg-slate-900/70 hover:bg-slate-800/80 text-amber-300 font-semibold py-3 px-6 rounded-lg border border-amber-700/40 transition-all font-cinzel tracking-wide text-sm"
                 >
                   See a sample
@@ -586,21 +706,76 @@ function App() {
               className="space-y-6 bg-slate-900/30 p-6 sm:p-8 rounded-lg border border-amber-900/20 shadow-2xl shadow-black/50 scroll-mt-24"
             >
               <div>
-                <label htmlFor="dream-textarea" className="block text-amber-400 mb-2 text-sm tracking-wide font-cinzel">
-                  Describe your dream
-                </label>
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                  <label htmlFor="dream-textarea" className="block text-amber-400 text-sm tracking-wide font-cinzel">
+                    Describe your dream
+                  </label>
+                  <button
+                    type="button"
+                    onClick={toggleDictation}
+                    aria-pressed={isListening}
+                    title={speechSupported ? 'Speak your dream aloud using your browser microphone' : 'Voice dictation availability info'}
+                    className={
+                      isListening
+                        ? 'inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-cinzel tracking-wide bg-red-950/70 hover:bg-red-900/70 text-red-200 border border-red-500/60 transition-all shadow-sm'
+                        : speechSupported
+                          ? 'inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-cinzel tracking-wide bg-slate-950/80 hover:bg-amber-950/40 text-amber-300 border border-amber-700/40 hover:border-amber-500/60 transition-all'
+                          : 'inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-cinzel tracking-wide bg-slate-950/50 text-amber-200/45 border border-amber-900/30 transition-all'
+                    }
+                  >
+                    {isListening ? (
+                      <>
+                        <span className="h-2 w-2 rounded-full bg-red-400 animate-ping" />
+                        <span>Stop listening</span>
+                      </>
+                    ) : (
+                      <>
+                        <span aria-hidden="true">🎙️</span>
+                        <span>{formData.dream_text.trim() ? 'Speak more' : 'Speak dream'}</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {isListening && (
+                  <p className="text-xs text-amber-300/90 mb-2 italic animate-pulse">
+                    Listening — speak naturally in your own words, then tap “Stop listening” when finished.
+                  </p>
+                )}
+
                 <textarea
                   id="dream-textarea"
                   ref={dreamTextareaRef}
                   required
                   rows={4}
-                  className="w-full bg-slate-950 border border-amber-900/30 rounded p-3 text-amber-100 focus:border-amber-600 focus:outline-none transition-colors placeholder:text-amber-900/50"
+                  className={`w-full bg-slate-950 rounded p-3 text-amber-100 focus:outline-none transition-colors placeholder:text-amber-900/50 ${
+                    isListening
+                      ? 'border border-amber-500/80 ring-1 ring-amber-500/30'
+                      : 'border border-amber-900/30 focus:border-amber-600'
+                  }`}
                   value={formData.dream_text}
-                  onChange={(e) => setFormData({ ...formData, dream_text: e.target.value })}
-                  placeholder="What happened in your dream? Write it in your own words — even a few sentences is enough..."
+                  onChange={(e) => {
+                    if (isListening) stopDictation({ abort: true });
+                    setFormData({ ...formData, dream_text: e.target.value });
+                  }}
+                  placeholder="What happened in your dream? Type or tap “Speak dream” to say it in your own words..."
                 />
+
+                {voiceHint && !isListening && (
+                  <div className="mt-2 flex items-start justify-between gap-2 bg-amber-950/30 border border-amber-700/30 rounded px-3 py-2 text-xs text-amber-200/85">
+                    <span>{voiceHint}</span>
+                    <button
+                      type="button"
+                      onClick={() => setVoiceHint(null)}
+                      className="text-amber-400 underline shrink-0 hover:text-amber-300"
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                )}
+
                 <p className="text-xs text-amber-200/55 mt-2 leading-relaxed">
-                  🔒 <span className="font-semibold text-amber-200/75">Privacy:</span> your dream is sent securely to generate your reflection preview and is never sold or used for ads. No name or email is needed for the free preview. Please avoid including full names, addresses, or other sensitive personal details.
+                  🔒 <span className="font-semibold text-amber-200/75">Privacy:</span> if you use “Speak dream,” voice-to-text happens in your browser — DreamDecode never receives or stores audio. Your dream text is sent securely to generate your preview and is never sold or used for ads. No name or email is needed for the free preview, and please avoid full names, addresses, or sensitive personal details.
                 </p>
               </div>
 
