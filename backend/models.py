@@ -13,8 +13,13 @@ class Dream(Base):
     __tablename__ = "dreams"
     
     id = Column(String, primary_key=True, index=True)
-    name = Column(String, nullable=False)
-    email = Column(String, nullable=False, index=True)
+    # Name and email are optional at preview time — an email is only required
+    # later, at subscribe (for the receipt and report delivery).
+    # NOTE: existing databases need `ALTER TABLE dreams ALTER COLUMN name DROP NOT NULL`
+    # and the same for email — applied automatically by _run_startup_migrations()
+    # in main.py on Postgres.
+    name = Column(String, nullable=True)
+    email = Column(String, nullable=True, index=True)
     dream_text = Column(Text, nullable=False)
     emotion = Column(String, nullable=True)
     colors = Column(String, nullable=True)
