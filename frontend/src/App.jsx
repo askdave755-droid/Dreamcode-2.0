@@ -14,6 +14,52 @@ const getSpeechRecognitionCtor = () =>
     ? window.SpeechRecognition || window.webkitSpeechRecognition || null
     : null;
 
+const canRecordAudio = () =>
+  typeof window !== 'undefined' &&
+  typeof window.MediaRecorder !== 'undefined' &&
+  Boolean(navigator?.mediaDevices?.getUserMedia);
+
+// On iOS/iPadOS, Apple restricts native SpeechRecognition to Safari itself.
+// Chrome on iPhone (CriOS), Firefox (FxiOS), Edge (EdgiOS), Home Screen PWAs,
+// and social in-app browsers must use MediaRecorder + /api/transcribe-dream.
+const isIOSChromeBrowser = () =>
+  typeof navigator !== 'undefined' && /CriOS/i.test(navigator.userAgent || '');
+
+const shouldPreferAudioRecorder = () => {
+  if (typeof window === 'undefined' || typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent || '';
+  const isIOS =
+    /iPad|iPhone|iPod/.test(ua) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const isIOSNonSafari =
+    isIOS &&
+    (/CriOS|FxiOS|EdgiOS|OPiOS|DuckDuckGo|Brave|GSA\/|FBAN|FBAV|Instagram|Musical_ly|Bytedance|TikTok|Snapchat|LinkedInApp|Twitter/i.test(ua) ||
+      Boolean(window.navigator?.standalone));
+  if (isIOSNonSafari) return true;
+  return !getSpeechRecognitionCtor();
+};
+
+const pickRecorderMime = () => {
+  if (typeof window === 'undefined' || typeof window.MediaRecorder === 'undefined') {
+    return { mimeType: '', ext: 'm4a' };
+  }
+  const candidates = [
+    { mimeType: 'audio/webm;codecs=opus', ext: 'webm' },
+    { mimeType: 'audio/webm', ext: 'webm' },
+    { mimeType: 'audio/mp4', ext: 'm4a' },
+    { mimeType: 'audio/ogg;codecs=opus', ext: 'ogg' },
+    { mimeType: 'audio/wav', ext: 'wav' },
+  ];
+  if (typeof window.MediaRecorder.isTypeSupported === 'function') {
+    for (const c of candidates) {
+      try {
+        if (window.MediaRecorder.isTypeSupported(c.mimeType)) return c;
+      } catch {}
+    }
+  }
+  return { mimeType: '', ext: 'm4a' };
+};
+
 // Transparent sample showing both what's in the free preview and what unlocks
 // in the full $4.99/mo report — without claiming one symbol always means one thing.
 const SAMPLE = {
@@ -98,14 +144,38 @@ function App() {
   const dreamTextareaRef = useRef(null);
   const dreamFormRef = useRef(null);
 
-  // Built-in browser voice dictation (Web Speech API — $0 cost, no audio sent to our server)
-  const [speechSupported] = useState(() => Boolean(getSpeechRecognitionCtor()));
+  // Hybrid voice input:
+  // - Native browser SpeechRecognition where available (Safari, Android/Desktop Chrome, Edge)
+  // - Automatic MediaRecorder + /api/transcribe-dream fallback on iPhone Chrome, Firefox, and webviews
+  const [voiceAvailable] = useState(() => Boolean(getSpeechRecognitionCtor()) || canRecordAudio());
   const [isListening, setIsListening] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const [voiceMode, setVoiceMode] = useState(null); // 'speech' | 'recorder' | null
   const [voiceHint, setVoiceHint] = useState(null);
+
   const recognitionRef = useRef(null);
+  const mediaRecorderRef = useRef(null);
+  const mediaStreamRef = useRef(null);
+  const recorderStopPromiseRef = useRef(null);
+  const recorderAbortedRef = useRef(false);
+  const maxRecordTimerRef = useRef(null);
+  const forceRecorderRef = useRef(false);
   const dictationBaseRef = useRef('');
 
   const feelings = ['Peace', 'Fear', 'Urgency', 'Joy', 'Confusion', 'Awe', 'Hope', 'Grief', 'Unease', 'Love'];
+
+  const releaseMediaStream = () => {
+    if (maxRecordTimerRef.current) {
+      clearTimeout(maxRecordTimerRef.current);
+      maxRecordTimerRef.current = null;
+    }
+    if (mediaStreamRef.current) {
+      try {
+        mediaStreamRef.current.getTracks().forEach(track => track.stop());
+      } catch {}
+      mediaStreamRef.current = null;
+    }
+  };
 
   const stopDictation = ({ abort = false } = {}) => {
     const rec = recognitionRef.current;
@@ -121,18 +191,182 @@ function App() {
         }
       } catch {}
     }
+
+    const mr = mediaRecorderRef.current;
+    if (mr) {
+      recorderAbortedRef.current = abort;
+      if (abort) {
+        mediaRecorderRef.current = null;
+        try {
+          if (mr.state !== 'inactive') mr.stop();
+        } catch {}
+        releaseMediaStream();
+        setIsListening(false);
+        setIsTranscribing(false);
+        setVoiceMode(null);
+        return Promise.resolve(null);
+      }
+      if (mr.state !== 'inactive') {
+        try {
+          mr.stop();
+        } catch {}
+      }
+      setIsListening(false);
+      return recorderStopPromiseRef.current || Promise.resolve(null);
+    }
+
     setIsListening(false);
+    setVoiceMode(null);
+    return Promise.resolve(null);
   };
 
   useEffect(() => {
-    return () => stopDictation({ abort: true });
+    return () => {
+      stopDictation({ abort: true });
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const toggleDictation = () => {
-    if (!speechSupported) {
-      setVoiceHint('Voice dictation isn’t supported in this browser — try Safari or Chrome, or tap the 🎤 microphone key on your phone keyboard.');
+  const startRecorderFallback = async () => {
+    if (!canRecordAudio()) {
+      setVoiceHint('Voice input isn’t supported in this browser — tap the 🎤 microphone key on your keyboard instead.');
       return;
     }
+
+    setError(null);
+    setVoiceHint(null);
+    dictationBaseRef.current = formData.dream_text.trim();
+    recorderAbortedRef.current = false;
+
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (err) {
+      console.error('Microphone access error:', err);
+      const errName = err?.name || '';
+      if (errName === 'NotAllowedError' || errName === 'PermissionDeniedError') {
+        if (isIOSChromeBrowser()) {
+          setVoiceHint('Microphone access is off for Chrome. On iPhone, open Settings → Chrome (or Settings → Apps → Chrome) and turn Microphone ON, then tap “Speak dream” again.');
+        } else {
+          setVoiceHint('Microphone permission was blocked. Allow mic access in your browser settings, or use the 🎤 key on your keyboard.');
+        }
+      } else if (errName === 'NotFoundError' || errName === 'DevicesNotFoundError') {
+        setVoiceHint('No microphone was detected on this device.');
+      } else {
+        setVoiceHint('Could not access the microphone in this browser — try tapping the 🎤 key on your keyboard.');
+      }
+      return;
+    }
+
+    mediaStreamRef.current = stream;
+    const { mimeType, ext } = pickRecorderMime();
+    let recorder;
+    try {
+      recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+    } catch {
+      try {
+        recorder = new MediaRecorder(stream);
+      } catch (err) {
+        console.error('MediaRecorder init failed:', err);
+        releaseMediaStream();
+        setVoiceHint('Voice recording isn’t supported in this browser — try tapping the 🎤 key on your keyboard.');
+        return;
+      }
+    }
+
+    const chunks = [];
+    recorder.ondataavailable = (ev) => {
+      if (ev.data && ev.data.size > 0) {
+        chunks.push(ev.data);
+      }
+    };
+
+    recorderStopPromiseRef.current = new Promise((resolve) => {
+      recorder.onstop = async () => {
+        mediaRecorderRef.current = null;
+        const actualMime = recorder.mimeType || mimeType || 'audio/mp4';
+        releaseMediaStream();
+        setIsListening(false);
+        setVoiceMode(null);
+
+        if (recorderAbortedRef.current) {
+          resolve(null);
+          return;
+        }
+
+        const blob = new Blob(chunks, { type: actualMime });
+        if (!blob || blob.size < 500) {
+          setVoiceHint('Didn’t catch any speech — tap “Speak dream” whenever you’re ready.');
+          resolve(null);
+          return;
+        }
+
+        const fileExt = actualMime.includes('webm')
+          ? 'webm'
+          : actualMime.includes('ogg')
+            ? 'ogg'
+            : actualMime.includes('wav')
+              ? 'wav'
+              : ext || 'm4a';
+
+        setIsTranscribing(true);
+        try {
+          const uploadData = new FormData();
+          uploadData.append('audio', blob, `dream.${fileExt}`);
+
+          const res = await fetch(`${API_URL}/api/transcribe-dream`, {
+            method: 'POST',
+            body: uploadData,
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            throw new Error(data.detail || 'Could not transcribe voice recording');
+          }
+
+          const spoken = (data.text || '').trim();
+          if (!spoken) {
+            setVoiceHint('Didn’t catch clear words — try speaking a little closer to your microphone.');
+            resolve(null);
+            return;
+          }
+
+          const base = dictationBaseRef.current;
+          const combined = base ? `${base} ${spoken}` : spoken;
+          setFormData(prev => ({ ...prev, dream_text: combined }));
+          resolve(combined);
+        } catch (err) {
+          console.error('Transcribe error:', err);
+          setVoiceHint(err.message || 'Could not transcribe audio right now — please try again or type below.');
+          resolve(null);
+        } finally {
+          setIsTranscribing(false);
+        }
+      };
+    });
+
+    try {
+      mediaRecorderRef.current = recorder;
+      recorder.start();
+      setVoiceMode('recorder');
+      setIsListening(true);
+      // Safety cap at 3 minutes so a forgotten mic stops & transcribes cleanly
+      maxRecordTimerRef.current = setTimeout(() => {
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+          stopDictation();
+        }
+      }, 180000);
+    } catch (err) {
+      console.error('MediaRecorder start error:', err);
+      mediaRecorderRef.current = null;
+      releaseMediaStream();
+      setIsListening(false);
+      setVoiceMode(null);
+      setVoiceHint('Could not start microphone recording — try tapping the 🎤 key on your keyboard.');
+    }
+  };
+
+  const toggleDictation = () => {
+    if (isTranscribing) return;
 
     if (isListening) {
       stopDictation();
@@ -140,8 +374,22 @@ function App() {
       return;
     }
 
+    if (!voiceAvailable) {
+      setVoiceHint('Voice input isn’t supported in this browser — tap the 🎤 microphone key on your phone keyboard.');
+      return;
+    }
+
+    // Use universal audio recorder on iPhone Chrome / Firefox / webviews (or if native speech failed earlier)
+    if (forceRecorderRef.current || shouldPreferAudioRecorder()) {
+      startRecorderFallback();
+      return;
+    }
+
     const SpeechRecognition = getSpeechRecognitionCtor();
-    if (!SpeechRecognition) return;
+    if (!SpeechRecognition) {
+      startRecorderFallback();
+      return;
+    }
 
     setError(null);
     setVoiceHint(null);
@@ -155,6 +403,7 @@ function App() {
     recognition.interimResults = true;
 
     recognition.onstart = () => {
+      setVoiceMode('speech');
       setIsListening(true);
     };
 
@@ -181,24 +430,36 @@ function App() {
 
     recognition.onerror = (event) => {
       const code = event?.error;
+      recognitionRef.current = null;
+      setIsListening(false);
+      setVoiceMode(null);
+
       if (code === 'aborted') {
-        // Intentional stop — no message needed
-      } else if (code === 'no-speech') {
+        return;
+      }
+      if (code === 'no-speech') {
         setVoiceHint('Didn’t catch any speech — tap “Speak dream” whenever you’re ready.');
-      } else if (code === 'not-allowed' || code === 'service-not-allowed') {
+      } else if (code === 'service-not-allowed' || code === 'language-not-supported') {
+        // Browser exposes SpeechRecognition without backing service — switch to universal recorder
+        if (canRecordAudio()) {
+          forceRecorderRef.current = true;
+          setVoiceHint('Switched to compatible microphone mode for this browser — tap “Speak dream” once more to record.');
+        } else {
+          setVoiceHint('Voice dictation isn’t enabled in this browser — try tapping the 🎤 key on your keyboard.');
+        }
+      } else if (code === 'not-allowed') {
         setVoiceHint('Microphone permission was blocked. Allow mic access in your browser settings, or use the 🎤 key on your keyboard.');
       } else if (code === 'audio-capture') {
         setVoiceHint('No microphone was detected on this device.');
       } else {
         setVoiceHint('Voice dictation paused — tap “Speak more” to continue or type below.');
       }
-      recognitionRef.current = null;
-      setIsListening(false);
     };
 
     recognition.onend = () => {
       recognitionRef.current = null;
       setIsListening(false);
+      setVoiceMode(null);
     };
 
     try {
@@ -208,7 +469,13 @@ function App() {
       console.error('SpeechRecognition start error:', err);
       recognitionRef.current = null;
       setIsListening(false);
-      setVoiceHint('Could not start voice dictation in this browser — try tapping the 🎤 key on your keyboard.');
+      setVoiceMode(null);
+      if (canRecordAudio()) {
+        forceRecorderRef.current = true;
+        startRecorderFallback();
+      } else {
+        setVoiceHint('Could not start voice dictation in this browser — try tapping the 🎤 key on your keyboard.');
+      }
     }
   };
 
@@ -362,8 +629,14 @@ function App() {
 
   const handleSubmitTeaser = async (e) => {
     e.preventDefault();
-    stopDictation();
-    if (!formData.dream_text.trim()) {
+    let dreamTextToSubmit = formData.dream_text;
+    if (isListening) {
+      const transcribed = await stopDictation();
+      if (transcribed) {
+        dreamTextToSubmit = transcribed;
+      }
+    }
+    if (!dreamTextToSubmit.trim()) {
       setError('Please describe your dream first — even a few sentences is enough.');
       return;
     }
@@ -385,6 +658,7 @@ function App() {
         },
         body: JSON.stringify({
           ...formData,
+          dream_text: dreamTextToSubmit,
           is_returning: isReturning
         })
       });
@@ -713,20 +987,28 @@ function App() {
                   <button
                     type="button"
                     onClick={toggleDictation}
+                    disabled={isTranscribing}
                     aria-pressed={isListening}
-                    title={speechSupported ? 'Speak your dream aloud using your browser microphone' : 'Voice dictation availability info'}
+                    title={voiceAvailable ? 'Speak your dream aloud using your microphone' : 'Voice dictation availability info'}
                     className={
-                      isListening
-                        ? 'inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-cinzel tracking-wide bg-red-950/70 hover:bg-red-900/70 text-red-200 border border-red-500/60 transition-all shadow-sm'
-                        : speechSupported
-                          ? 'inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-cinzel tracking-wide bg-slate-950/80 hover:bg-amber-950/40 text-amber-300 border border-amber-700/40 hover:border-amber-500/60 transition-all'
-                          : 'inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-cinzel tracking-wide bg-slate-950/50 text-amber-200/45 border border-amber-900/30 transition-all'
+                      isTranscribing
+                        ? 'inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-cinzel tracking-wide bg-amber-950/60 text-amber-200 border border-amber-600/50 opacity-80 cursor-wait transition-all'
+                        : isListening
+                          ? 'inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-cinzel tracking-wide bg-red-950/70 hover:bg-red-900/70 text-red-200 border border-red-500/60 transition-all shadow-sm'
+                          : voiceAvailable
+                            ? 'inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-cinzel tracking-wide bg-slate-950/80 hover:bg-amber-950/40 text-amber-300 border border-amber-700/40 hover:border-amber-500/60 transition-all'
+                            : 'inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-cinzel tracking-wide bg-slate-950/50 text-amber-200/45 border border-amber-900/30 transition-all'
                     }
                   >
-                    {isListening ? (
+                    {isTranscribing ? (
+                      <>
+                        <span className="h-2 w-2 rounded-full bg-amber-400 animate-ping" />
+                        <span>Transcribing...</span>
+                      </>
+                    ) : isListening ? (
                       <>
                         <span className="h-2 w-2 rounded-full bg-red-400 animate-ping" />
-                        <span>Stop listening</span>
+                        <span>{voiceMode === 'recorder' ? 'Done speaking' : 'Stop listening'}</span>
                       </>
                     ) : (
                       <>
@@ -739,7 +1021,15 @@ function App() {
 
                 {isListening && (
                   <p className="text-xs text-amber-300/90 mb-2 italic animate-pulse">
-                    Listening — speak naturally in your own words, then tap “Stop listening” when finished.
+                    {voiceMode === 'recorder'
+                      ? 'Recording — speak your dream naturally, then tap “Done speaking” to convert your voice to text.'
+                      : 'Listening — speak naturally in your own words, then tap “Stop listening” when finished.'}
+                  </p>
+                )}
+
+                {isTranscribing && (
+                  <p className="text-xs text-amber-300/90 mb-2 italic animate-pulse">
+                    Converting your voice to text...
                   </p>
                 )}
 
@@ -749,7 +1039,7 @@ function App() {
                   required
                   rows={4}
                   className={`w-full bg-slate-950 rounded p-3 text-amber-100 focus:outline-none transition-colors placeholder:text-amber-900/50 ${
-                    isListening
+                    isListening || isTranscribing
                       ? 'border border-amber-500/80 ring-1 ring-amber-500/30'
                       : 'border border-amber-900/30 focus:border-amber-600'
                   }`}
@@ -761,7 +1051,7 @@ function App() {
                   placeholder="What happened in your dream? Type or tap “Speak dream” to say it in your own words..."
                 />
 
-                {voiceHint && !isListening && (
+                {voiceHint && !isListening && !isTranscribing && (
                   <div className="mt-2 flex items-start justify-between gap-2 bg-amber-950/30 border border-amber-700/30 rounded px-3 py-2 text-xs text-amber-200/85">
                     <span>{voiceHint}</span>
                     <button
@@ -775,7 +1065,7 @@ function App() {
                 )}
 
                 <p className="text-xs text-amber-200/55 mt-2 leading-relaxed">
-                  🔒 <span className="font-semibold text-amber-200/75">Privacy:</span> if you use “Speak dream,” voice-to-text happens in your browser — DreamDecode never receives or stores audio. Your dream text is sent securely to generate your preview and is never sold or used for ads. No name or email is needed for the free preview, and please avoid full names, addresses, or sensitive personal details.
+                  🔒 <span className="font-semibold text-amber-200/75">Privacy:</span> voice input is converted directly to text and audio is never stored. Your dream text is sent securely to generate your preview and is never sold or used for ads. No name or email is needed for the free preview, and please avoid full names, addresses, or sensitive personal details.
                 </p>
               </div>
 
@@ -825,10 +1115,14 @@ function App() {
 
               <button
                 type="submit"
-                disabled={loading}
+                disabled={loading || isTranscribing}
                 className="w-full bg-gradient-to-r from-amber-700 to-amber-600 hover:from-amber-600 hover:to-amber-500 text-white font-bold py-4 px-6 rounded-lg shadow-lg shadow-amber-900/20 transition-all transform hover:scale-[1.01] disabled:opacity-50 disabled:cursor-not-allowed font-cinzel tracking-wider"
               >
-                {loading ? 'Preparing your free preview...' : 'Explore possible themes — free preview'}
+                {isTranscribing
+                  ? 'Finishing voice transcription...'
+                  : loading
+                    ? 'Preparing your free preview...'
+                    : 'Explore possible themes — free preview'}
               </button>
 
               <p className="text-center text-xs text-amber-200/45">
