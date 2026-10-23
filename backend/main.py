@@ -30,6 +30,45 @@ try:
 except Exception as e:
     print(f"⚠️ Database init failed (app will still serve /health): {e}")
 
+def _run_startup_migrations():
+    """Apply idempotent schema updates on existing databases.
+
+    create_all() only creates missing tables — it never alters columns — so
+    databases created before the trust rework still have NOT NULL constraints
+    on name/email and lack is_returning. Safe to run on every boot; wrapped so
+    a failure can never crash startup.
+    """
+    if engine is None:
+        return
+    try:
+        dialect = engine.dialect.name
+    except Exception:
+        return
+
+    if dialect == "postgresql":
+        statements = [
+            "ALTER TABLE dreams ALTER COLUMN name DROP NOT NULL",
+            "ALTER TABLE dreams ALTER COLUMN email DROP NOT NULL",
+            "ALTER TABLE dreams ADD COLUMN IF NOT EXISTS is_returning BOOLEAN DEFAULT FALSE",
+        ]
+        for stmt in statements:
+            try:
+                with engine.begin() as conn:
+                    conn.execute(text(stmt))
+            except Exception as e:
+                print(f"⚠️ Startup migration skipped ({stmt}): {e}")
+        print("✅ Startup migrations verified (dreams.name/email nullable, is_returning present)")
+    elif dialect == "sqlite":
+        try:
+            with engine.begin() as conn:
+                cols = [row[1] for row in conn.execute(text("PRAGMA table_info(dreams)")).fetchall()]
+                if cols and "is_returning" not in cols:
+                    conn.execute(text("ALTER TABLE dreams ADD COLUMN is_returning BOOLEAN DEFAULT 0"))
+        except Exception as e:
+            print(f"⚠️ SQLite startup migration skipped (non-fatal): {e}")
+
+_run_startup_migrations()
+
 app = FastAPI(title="DreamDecode API")
 
 # CORS Configuration
@@ -43,16 +82,22 @@ app.add_middleware(
 
 # Pydantic Models
 class DreamInput(BaseModel):
-    name: str
-    email: str
+    # Name and email are NOT required up front: visitors get a free preview
+    # with just their dream. Email is collected later, only to subscribe.
+    name: Optional[str] = None
+    email: Optional[str] = None
     dream_text: str
     emotion: Optional[str] = None
     colors: Optional[str] = None
     symbols: Optional[str] = None
     referral_code: Optional[str] = None
+    is_returning: Optional[bool] = False
 
 class CheckoutRequest(BaseModel):
     dream_id: str
+    # Email is supplied at subscribe time (used for the Stripe customer,
+    # the receipt, and report delivery) and saved onto the dream record.
+    email: Optional[str] = None
 
 class PaymentVerify(BaseModel):
     session_id: str
@@ -110,32 +155,80 @@ def _customer_has_active_subscription(email: str) -> bool:
                         return True
     return False
 
-def generate_teaser(dream_data: dict):
-    """Generate 2-sentence teaser using GPT-4o-mini"""
-    prompt = f"""You are a biblical dream interpreter in the tradition of Joseph. 
-    Analyze this dream and write a compelling 2-sentence teaser that:
-    1. References ONE specific detail from the dream (color, object, or emotion)
-    2. Hints at spiritual significance without fully explaining
-    3. Uses biblical/mystical language
-    4. Ends with mystery (ellipsis or "but...")
-    
-    Dream: {dream_data['dream_text']}
-    Emotion: {dream_data.get('emotion', 'unknown')}
-    Colors: {dream_data.get('colors', 'none mentioned')}
-    
-    Write only the 2-sentence teaser, nothing else."""
-    
+def generate_preview(dream_data: dict) -> dict:
+    """Generate a structured free preview using GPT-4o-mini.
+
+    Delivers on the first-screen promise — possible biblical theme(s), a
+    Scripture reference to read in context, and a personal reflection question
+    — while staying humble and never claiming God's definitive meaning.
+    """
+    prompt = f"""You are a humble Christian guide helping someone reflect on a dream through a biblical lens.
+Never prophesy, never assign fixed one-to-one symbol codes, and never declare what God is saying. Use language like "may suggest," "could invite reflection on," or "is worth weighing in prayer."
+
+Dream: {dream_data['dream_text']}
+Feeling that stood out: {dream_data.get('emotion') or 'not specified'}
+Colors remembered: {dream_data.get('colors') or 'none mentioned'}
+Symbols/objects noted: {dream_data.get('symbols') or 'none mentioned'}
+
+Return STRICT JSON with this exact shape:
+{{
+  "summary": "2-3 warm, humble sentences referencing one specific detail or feeling from the dream and suggesting a possible biblical theme worth prayerful consideration (never a verdict).",
+  "scripture": {{
+    "reference": "Book Chapter:Verse",
+    "text": "Exact short Scripture verse text that connects to that possible theme"
+  }},
+  "reflection_question": "One gentle, open-ended question to help the dreamer pray and reflect personally on this dream"
+}}"""
+
     try:
         response = get_openai_client().chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
-            temperature=0.8,
-            max_tokens=150
+            temperature=0.7,
+            max_tokens=300,
+            response_format={"type": "json_object"}
         )
-        return response.choices[0].message.content.strip()
+        parsed = json.loads(response.choices[0].message.content)
+        summary = (parsed.get("summary") or "").strip()
+        scripture = parsed.get("scripture") or {}
+        question = (parsed.get("reflection_question") or "").strip()
+        if summary and scripture.get("reference") and question:
+            return {
+                "summary": summary,
+                "scripture": {
+                    "reference": scripture.get("reference", "").strip(),
+                    "text": (scripture.get("text") or "").strip(),
+                },
+                "reflection_question": question,
+            }
     except Exception as e:
-        print(f"OpenAI teaser error: {e}")
-        return "A mysterious vision approaches your spirit... but its full meaning awaits revelation."
+        print(f"OpenAI preview error: {e}")
+
+    feeling = (dream_data.get("emotion") or "").strip().lower()
+    feeling_clause = (
+        f" — especially the sense of {feeling} that stood out —"
+        if feeling else ""
+    )
+    return {
+        "summary": (
+            f"The imagery in your dream{feeling_clause} may invite quiet, prayerful reflection on "
+            "where you are seeking clarity, peace, or direction right now. Rather than rushing to a fixed "
+            "meaning, consider how these details echo themes of God's presence and wisdom in Scripture."
+        ),
+        "scripture": {
+            "reference": "Psalm 16:7",
+            "text": "I will praise the LORD, who counsels me; even at night my heart instructs me.",
+        },
+        "reflection_question": (
+            "Which moment or feeling in this dream lingers with you most today, and what happens "
+            "when you bring that honest impression before God in prayer?"
+        ),
+    }
+
+
+def generate_teaser(dream_data: dict) -> str:
+    """Backwards-compatible string helper returning the preview summary."""
+    return generate_preview(dream_data)["summary"]
 
 def generate_full_report(dream_data: dict):
     """Generate full biblical interpretation using GPT-4o.
@@ -147,39 +240,51 @@ def generate_full_report(dream_data: dict):
     with discernment of the dream's source. All meanings are generated
     from the Bible itself (no proprietary dictionary content is copied).
     """
-    system_prompt = """You are a prophetic dream interpreter in the tradition of Joseph (Genesis 40-41) and Daniel (Daniel 2, 4, 7), using a biblical metaphor-decoding methodology.
+    system_prompt = """You are a thoughtful, humble guide helping Christians reflect on their dreams through a biblical lens, in the spirit of Joseph (Genesis 40-41) and Daniel (Daniel 2, 4, 7).
 
-CORE INTERPRETIVE FRAMEWORK:
-1. DREAMS ARE PARABLES. God speaks in the same symbolic language Jesus used in parables (Psalm 78:2, Mark 4:34). Never interpret a symbol literally first — always seek its metaphorical/spiritual meaning through Scripture.
-2. EVERY SYMBOL MATTERS. Decode each significant symbol (objects, people, animals, places, actions, body parts) individually, then weave them into one coherent message.
-3. NAMES AND PLACES CARRY MEANING. In Scripture, names reveal destiny (Abram→Abraham, Jacob→Israel). If a person or place appears, consider the meaning of that name or what that place represents biblically.
-4. COLORS ARE PROPHETIC. Interpret every color biblically (e.g., white = purity/righteousness, red = blood/atonement or war, blue = heavenly/revelation, gold = glory/deity, purple = royalty, green = life/growth, black = darkness/famine, silver = redemption).
-5. NUMBERS ARE SIGNIFICANT. Interpret numbers biblically (e.g., 3 = divine completeness/resurrection, 7 = perfection/completion, 12 = government/tribes/apostles, 40 = testing/trial, 50 = jubilee/freedom).
-6. DISCERN THE SOURCE. Every dream comes from one of three sources:
-   - GOD: edifies, aligns with Scripture, produces peace even when corrective, calls the dreamer higher
+WHO YOU ARE — AND ARE NOT:
+- You suggest POSSIBLE themes, questions, and Scripture passages for personal reflection.
+- You do NOT prophesy, do NOT claim divine authority, and NEVER declare God's definitive meaning for someone's dream.
+- You do NOT replace Scripture, prayer, or pastoral counsel — say so, and encourage the dreamer to bring significant dreams to a trusted pastor or mature believer.
+
+CORE REFLECTIVE FRAMEWORK:
+1. DREAMS CAN BE LIKE PARABLES. Jesus taught in parables (Psalm 78:2, Mark 4:34), and Scripture records God speaking through dreams. Explore the dream's imagery as possible metaphorical and spiritual themes — always as possibilities, never verdicts.
+2. EVERY SYMBOL IS WORTH CONSIDERING. Reflect on each significant symbol (objects, people, animals, places, actions, body parts) individually, then weave the possibilities into a coherent set of themes to weigh.
+3. NAMES AND PLACES MAY CARRY MEANING. In Scripture, names can reveal destiny (Abram→Abraham, Jacob→Israel). If a person or place appears, consider what that name or place may represent biblically — as one possibility among others.
+4. COLORS CAN SUGGEST THEMES. Offer possible biblical associations for colors (e.g., white may suggest purity, red may suggest sacrifice or conflict, blue may suggest heaven, gold may suggest glory) — always as suggestions, never fixed codes.
+5. NUMBERS MAY BE SIGNIFICANT. Offer possible biblical associations for numbers (e.g., 3, 7, 12, 40) as food for thought, not as certainties.
+6. OFFER DISCERNMENT, NOT DECLARATIONS. Christians have traditionally weighed whether a dream seems consistent with:
+   - GOD: edifying, aligned with Scripture, producing peace even when corrective, calling the dreamer higher
    - THE SOUL: the mind processing daily anxieties, memories, and emotions (Ecclesiastes 5:3)
-   - THE ENEMY (counterfeit): fear-driven, condemning, hopelessly dark, or contradicts Scripture — these must be exposed and rejected, not obeyed
-   State clearly which source this dream most likely flows from and why, with grace and without fear-mongering.
-7. SCRIPTURE IS THE FINAL AUTHORITY. God never contradicts His written Word. Anchor every interpretation and every symbol meaning to a specific verse.
-8. TONE: Speak like Joseph and Daniel — humble before God, honoring to the dreamer, hopeful even when corrective. Never use fear, doom, or flattery.
+   - A COUNTERFEIT (to be tested): fear-driven, condemning, hopelessly dark, or contradicting Scripture — to be tested against God's Word, not obeyed
+   Offer which of these the dream's marks seem most consistent with — phrased as a prayerful consideration ("this dream has marks consistent with..."), never a declaration — and direct the dreamer to test it through Scripture, prayer, and wise counsel.
+7. SCRIPTURE IS THE FINAL AUTHORITY. God never contradicts His written Word. Anchor every theme and symbol reflection to a specific verse, and encourage the dreamer to read each passage in context.
+8. HUMILITY IN EVERY CLAIM. Use "may suggest," "could reflect," "is worth considering." Present multiple possibilities where they exist. Where a symbol has more than one biblical association (a lion pictures Christ in Revelation 5:5 and danger in 1 Peter 5:8), say so. Never assign one fixed meaning to any symbol.
+9. TONE: Warm, humble, and honoring to the dreamer; hopeful even when raising hard questions. Never use fear, doom, flattery, or absolute pronouncements ("this dream means...," "God is telling you...").
 
 Return STRICT JSON format:
 {
+    "discernment_note": "2-3 sentences reminding the dreamer these are possible themes to weigh prayerfully — not prophecy or a definitive message from God — and to test everything against Scripture, prayer, and pastoral counsel (1 Thessalonians 5:21).",
     "source_discernment": {
-        "source": "God | Soul | Enemy (counterfeit)",
-        "explanation": "Why this dream flows from this source — reference the dream's fruit, tone, and alignment with Scripture",
-        "counsel": "What the dreamer should do with this dream in light of its source (e.g., steward it in prayer, release anxiety, or reject and renounce the lie)"
+        "source": "God | Soul | Counterfeit (to be tested)",
+        "explanation": "Which source this dream's marks seem most consistent with and why — reference the dream's fruit, tone, and alignment with Scripture. Phrase as a consideration, not a verdict.",
+        "counsel": "How the dreamer might prayerfully steward this dream (e.g., journal and pray over it, release anxiety to God, test unsettling impressions against Scripture with a trusted counselor or pastor)"
     },
     "interpretations": [
-        {"title": "The Revelation", "meaning": "..."},
-        {"title": "The Warning/Confirmation", "meaning": "..."},
-        {"title": "The Action Step", "meaning": "..."}
+        {"title": "A Theme to Reflect On", "meaning": "..."},
+        {"title": "Another Angle to Weigh", "meaning": "..."},
+        {"title": "A Possible Next Step", "meaning": "..."}
+    ],
+    "reflection_questions": [
+        "Open-ended personal reflection question #1 grounded in the dream's imagery or feeling",
+        "Open-ended personal reflection question #2 connecting the dream to daily walk / Scripture",
+        "Open-ended question #3 inviting prayer or conversation with a pastor / trusted mature believer"
     ],
     "symbol_dictionary": [
         {
             "symbol": "The symbol exactly as it appeared in the dream",
-            "biblical_meaning": "Its metaphorical/spiritual meaning decoded through Scripture — be specific, not generic",
-            "scripture": "Book Chapter:Verse supporting this meaning"
+            "biblical_meaning": "Possible metaphorical/spiritual associations drawn from Scripture — be specific, not generic; mention more than one association where Scripture supports it",
+            "scripture": "Book Chapter:Verse supporting this reflection"
         }
     ],
     "scripture": {
@@ -202,14 +307,15 @@ Return STRICT JSON format:
     "prayer": "Personalized prayer using dream elements"
 }
 
-IMPORTANT: Include every significant symbol, color, number, name, and place from the dream in symbol_dictionary (typically 3-8 entries). If the dreamer listed symbols or colors explicitly, those MUST appear."""
+IMPORTANT: Include every significant symbol, color, number, name, and place from the dream in symbol_dictionary (typically 3-8 entries). If the dreamer listed symbols or colors explicitly, those MUST appear. Frame every entry as a possibility ("may suggest"), never a fixed code."""
     
-    user_prompt = f"""Interpret this dream for {dream_data['name']}:
+    dreamer = dream_data.get('name') or "this dreamer"
+    user_prompt = f"""Help {dreamer} reflect on this dream through a biblical lens:
     
     Content: {dream_data['dream_text']}
-    Emotion: {dream_data.get('emotion', 'Not specified')}
-    Colors: {dream_data.get('colors', 'Not specified')}
-    Symbols: {dream_data.get('symbols', 'Not specified')}
+    Feeling that stood out: {dream_data.get('emotion') or 'Not specified'}
+    Colors: {dream_data.get('colors') or 'Not specified'}
+    Symbols: {dream_data.get('symbols') or 'Not specified'}
     
     Provide the JSON response."""
     
@@ -227,47 +333,54 @@ IMPORTANT: Include every significant symbol, color, number, name, and place from
         return json.loads(response.choices[0].message.content)
     except Exception as e:
         print(f"OpenAI report error: {e}")
+        dreamer_name = dream_data.get('name') or "Your child"
         return {
+            "discernment_note": "These are possible themes to weigh prayerfully — not prophecy, and not a definitive message from God about your dream. Test everything against Scripture, prayer, and the counsel of a trusted pastor or mature believer (1 Thessalonians 5:21).",
             "source_discernment": {
-                "source": "God",
-                "explanation": "Dreams that stir the heart toward God are worth stewarding prayerfully, for He still speaks in the night seasons (Job 33:14-16).",
-                "counsel": "Write this dream down, pray over its symbols, and ask the Holy Spirit to confirm its meaning through Scripture and peace."
+                "source": "Worth discerning in prayer",
+                "explanation": "Dreams that stir the heart toward God are worth stewarding prayerfully, for He has spoken in the night seasons (Job 33:14-16). Consider what fruit this dream bears as you pray over it.",
+                "counsel": "Write this dream down, read the passages below in context, and discuss what stands out with a trusted counselor or pastor."
             },
             "interpretations": [
-                {"title": "The Revelation", "meaning": "Your dream carries spiritual significance that requires prayerful consideration."},
-                {"title": "The Warning/Confirmation", "meaning": "Pay attention to the emotions and symbols that stood out most vividly."},
-                {"title": "The Action Step", "meaning": "Pray for discernment and seek wise counsel from spiritual mentors."}
+                {"title": "A Theme to Reflect On", "meaning": "Your dream may hold themes worth prayerful consideration — notice which images linger with you most."},
+                {"title": "Another Angle to Weigh", "meaning": "In Scripture, the same image can carry comfort in one season and caution in another; weigh the overall fruit and tone of the dream rather than isolating a single detail."},
+                {"title": "A Possible Next Step", "meaning": "Pray for discernment, read the Scripture below in context, and consider discussing the dream with a trusted pastor or mature believer."}
+            ],
+            "reflection_questions": [
+                "Which single image or feeling from this dream stayed with you most after waking?",
+                "Is there a situation in your current season where you are seeking God's peace, wisdom, or correction?",
+                "Who is a pastor, counselor, or mature Christian friend you could invite to pray and weigh this with you?"
             ],
             "symbol_dictionary": [
                 {
                     "symbol": "The dream itself",
-                    "biblical_meaning": "God often seals instruction in the heart during the night seasons, speaking when the noise of the day is stilled.",
+                    "biblical_meaning": "Scripture pictures God as one who can seal instruction in the heart during the night seasons, when the noise of the day is stilled — a possibility worth weighing, not a verdict.",
                     "scripture": "Job 33:14-16"
                 },
                 {
-                    "symbol": "Vivid emotions",
-                    "biblical_meaning": "The emotional weight of a dream often marks the area of life God is highlighting for healing or direction.",
+                    "symbol": "Vivid feelings",
+                    "biblical_meaning": "The emotional weight of a dream may point to the area of life most worth bringing before God in prayer.",
                     "scripture": "Psalm 16:7"
                 }
             ],
             "scripture": {
                 "reference": "Proverbs 3:5-6",
                 "text": "Trust in the LORD with all your heart and lean not on your own understanding.",
-                "context": "God speaks through dreams, but interpretation belongs to Him."
+                "context": "Whatever a dream may suggest, trust and discernment belong with God and His Word."
             },
             "joseph_daniel_anchor": {
                 "joseph": {
                     "reference": "Genesis 41:16",
-                    "connection": "Like Joseph before Pharaoh, the meaning of your dream is held by God Himself and revealed in His timing.",
-                    "insight": "Joseph waited years for his own dreams to unfold — faithfulness in the waiting is part of the interpretation."
+                    "connection": "Joseph insisted that interpretations belong to God — a reminder to hold every reflection with humility.",
+                    "insight": "Joseph waited years for his own dreams to unfold — faithfulness in the waiting matters as much as understanding."
                 },
                 "daniel": {
                     "reference": "Daniel 2:22",
-                    "connection": "As with Daniel, the deep and hidden things of your dream belong to God, who reveals mysteries to those who seek Him.",
-                    "insight": "Daniel sought God in prayer before the interpretation came — pursue Him first, and clarity will follow."
+                    "connection": "Daniel sought God in prayer before any interpretation came — the pursuit of God precedes clarity.",
+                    "insight": "Bring your dream to God first in prayer, and let Scripture and wise counsel confirm what is worth holding onto."
                 }
             },
-            "prayer": f"Lord, reveal the meaning of this vision to {dream_data['name']} according to Your wisdom and timing."
+            "prayer": f"Lord, guide {dreamer_name} as they reflect on this dream. Grant wisdom, peace, and discernment through Your Word and Your Spirit."
         }
 
 @app.post("/api/analyze-teaser")
@@ -279,10 +392,11 @@ async def analyze_teaser(dream: DreamInput, db: Session = Depends(get_db)):
     referrer = None
     if dream.referral_code:
         referrer = db.query(Dream).filter(Dream.referral_code == dream.referral_code).first()
-        print(f"Referrer found: {referrer.name if referrer else 'None'}")
+        print(f"Referrer found: {(referrer.name if referrer and referrer.name else 'None')}")
     
-    # Generate teaser
-    teaser_text = generate_teaser(dream.dict())
+    # Generate structured free preview (summary + Scripture + reflection question)
+    preview_data = generate_preview(dream.model_dump() if hasattr(dream, "model_dump") else dream.dict())
+    teaser_text = preview_data["summary"]
     
     # Create database record
     db_dream = Dream(
@@ -293,18 +407,20 @@ async def analyze_teaser(dream: DreamInput, db: Session = Depends(get_db)):
         emotion=dream.emotion,
         colors=dream.colors,
         symbols=dream.symbols,
+        is_returning=bool(dream.is_returning),
         referred_by=referrer.id if referrer else None,
         is_paid=False
     )
     db.add(db_dream)
     db.commit()
     
-    print(f"✅ Dream created: {dream_id} for {dream.email}")
+    print(f"✅ Dream created: {dream_id} for {dream.email or 'anonymous preview'}")
     
     return {
         "dream_id": dream_id,
         "referral_code": db_dream.referral_code,
         "teaser": teaser_text,
+        "preview": preview_data,
         "hebrew_year": get_hebrew_year(),
         "discount_applied": True if referrer else False,
         "price": 4.99,
@@ -320,12 +436,13 @@ async def get_referral_info(code: str, db: Session = Depends(get_db)):
     if not referrer:
         raise HTTPException(status_code=404, detail="Blessing code not found")
     
+    referrer_display = referrer.name or "A friend"
     return {
-        "referrer_name": referrer.name,
-        "referrer_dream_preview": f"A blessed vision from {referrer.name}",
+        "referrer_name": referrer.name,  # may be null — frontend falls back to "A friend"
+        "referrer_dream_preview": f"A blessed vision from {referrer_display}",
         "discount_active": False,
         "discount_percent": 0,
-        "message": f"Your friend {referrer.name} has shared the gift of dream interpretation with you. Like the loaves and fishes, this blessing multiplies when shared."
+        "message": f"{referrer_display} has shared the gift of biblical dream reflection with you. Like the loaves and fishes, this blessing multiplies when shared."
     }
 
 @app.post("/api/get-full-report")
@@ -342,7 +459,7 @@ async def get_full_report(request: FreeReportRequest, background_tasks: Backgrou
         raise HTTPException(status_code=404, detail="Dream not found")
     
     if not dream.is_paid:
-        raise HTTPException(status_code=402, detail="An active DreamDecode subscription ($4.99/mo) is required to reveal the full report.")
+        raise HTTPException(status_code=402, detail="An active DreamDecode subscription ($4.99/mo) is required to unlock the full reflection report.")
     
     # Already generated — return cached version
     if dream.interpretation:
@@ -353,7 +470,7 @@ async def get_full_report(request: FreeReportRequest, background_tasks: Backgrou
         }
     
     # Generate full report
-    print(f"🤖 Generating report for: {dream.name}")
+    print(f"🤖 Generating report for: {dream.name or dream.email or dream.id}")
     report = generate_full_report({
         "name": dream.name,
         "dream_text": dream.dream_text,
@@ -383,7 +500,7 @@ async def get_full_report(request: FreeReportRequest, background_tasks: Backgrou
     # Notify referrer if applicable
     if dream.referred_by:
         referrer = db.query(Dream).filter(Dream.id == dream.referred_by).first()
-        if referrer:
+        if referrer and referrer.email:
             background_tasks.add_task(
                 send_referrer_notification,
                 referrer.email,
@@ -394,7 +511,7 @@ async def get_full_report(request: FreeReportRequest, background_tasks: Backgrou
     return {
         "status": "revealed",
         "report": report,
-        "message": "Your revelation has been emailed to you"
+        "message": "Your full reflection report has been emailed to you"
     }
 
 # ---- Billing: $4.99/month subscription ----
@@ -419,14 +536,26 @@ async def create_checkout(request: CheckoutRequest, db: Session = Depends(get_db
         print(f"❌ Dream not found: {dream_id}")
         raise HTTPException(status_code=404, detail="Dream not found")
     
+    # Email is collected at subscribe time (not up front). It is required here:
+    # Stripe needs it for the customer + receipt, and report delivery needs it.
+    email = ((request.email or "") or (dream.email or "")).strip()
+    if not email:
+        raise HTTPException(
+            status_code=400,
+            detail="An email address is required to subscribe — it's used for your receipt and to deliver your report."
+        )
+    if email != dream.email:
+        dream.email = email
+        db.commit()
+
     frontend_url = _clean_frontend_url()
     
     # Already subscribed to DREAMDECODE under this email? Unlock without charging again.
     try:
-        if _customer_has_active_subscription(dream.email):
+        if _customer_has_active_subscription(email):
             dream.is_paid = True
             db.commit()
-            print(f"✅ Existing subscriber — unlocked {dream_id} for {dream.email} with no new charge")
+            print(f"✅ Existing subscriber — unlocked {dream_id} for {email} with no new charge")
             return {"already_subscribed": True, "dream_id": dream_id}
     except Exception as e:
         print(f"⚠️ Subscription lookup failed (continuing to checkout): {e}")
@@ -435,7 +564,7 @@ async def create_checkout(request: CheckoutRequest, db: Session = Depends(get_db
         raise HTTPException(status_code=500, detail="STRIPE_PRICE_ID not configured — set the $4.99/mo price ID in Railway variables")
     
     success_url = f"{frontend_url}/?session_id={{CHECKOUT_SESSION_ID}}&dream_id={dream_id}"
-    cancel_url = f"{frontend_url}/?cancelled=1"
+    cancel_url = f"{frontend_url}/?cancelled=1&dream_id={dream_id}"
     
     # Trial / intro-discount config — change these in Railway variables, no redeploy needed:
     #   TRIAL_DAYS=7         → card collected, $0 today, first bill after N days
@@ -453,7 +582,7 @@ async def create_checkout(request: CheckoutRequest, db: Session = Depends(get_db
         "mode": 'subscription',
         "success_url": success_url,
         "cancel_url": cancel_url,
-        "customer_email": dream.email,
+        "customer_email": email,
         "metadata": {"dream_id": dream_id},
         "subscription_data": subscription_data,
     }
@@ -511,6 +640,18 @@ async def verify_payment(data: PaymentVerify, background_tasks: BackgroundTasks,
         
         if not dream:
             raise HTTPException(status_code=404, detail="Dream not found")
+
+        # Backfill email from Stripe Checkout session if needed
+        if not dream.email:
+            customer_details = getattr(session, "customer_details", None)
+            session_email = (
+                getattr(customer_details, "email", None)
+                or (customer_details.get("email") if isinstance(customer_details, dict) else None)
+                or getattr(session, "customer_email", None)
+            )
+            if session_email:
+                dream.email = session_email.strip()
+                db.commit()
         
         # Check if already processed
         if dream.is_paid and dream.interpretation:
@@ -521,7 +662,7 @@ async def verify_payment(data: PaymentVerify, background_tasks: BackgroundTasks,
             }
         
         # Generate full report
-        print(f"🤖 Generating report for: {dream.name}")
+        print(f"🤖 Generating report for: {dream.name or dream.email or dream.id}")
         report = generate_full_report({
             "name": dream.name,
             "dream_text": dream.dream_text,
@@ -551,7 +692,7 @@ async def verify_payment(data: PaymentVerify, background_tasks: BackgroundTasks,
         # Notify referrer if applicable
         if dream.referred_by:
             referrer = db.query(Dream).filter(Dream.id == dream.referred_by).first()
-            if referrer:
+            if referrer and referrer.email:
                 background_tasks.add_task(
                     send_referrer_notification,
                     referrer.email,
@@ -562,7 +703,7 @@ async def verify_payment(data: PaymentVerify, background_tasks: BackgroundTasks,
         return {
             "status": "paid",
             "report": report,
-            "message": "Your revelation has been emailed to you"
+            "message": "Your full reflection report has been emailed to you"
         }
         
     except Exception as e:
@@ -611,7 +752,7 @@ async def download_pdf(dream_id: str, db: Session = Depends(get_db)):
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
-        headers={"Content-Disposition": f"attachment; filename=dream-revelation-{dream_id}.pdf"}
+        headers={"Content-Disposition": f"attachment; filename=dream-reflection-{dream_id}.pdf"}
     )
 
 @app.get("/api/test-email")
@@ -623,6 +764,42 @@ def test_email():
     result = send_test_email()
     result["email_provider"] = email_provider() or "none"
     return result
+
+@app.get("/api/funnel-metrics")
+def funnel_metrics(db: Session = Depends(get_db)):
+    """Privacy-safe aggregate funnel counts (no emails, names, or dream text):
+    completed first reflections, returning reflections, paid conversions, and
+    returning subscribers."""
+    from sqlalchemy import func
+
+    total_previews = db.query(func.count(Dream.id)).scalar() or 0
+    returning_previews = (
+        db.query(func.count(Dream.id))
+        .filter(Dream.is_returning.is_(True))
+        .scalar()
+        or 0
+    )
+    first_previews = max(0, total_previews - returning_previews)
+    paid_reflections = (
+        db.query(func.count(Dream.id))
+        .filter(Dream.is_paid.is_(True))
+        .scalar()
+        or 0
+    )
+    returning_subscriber_rows = (
+        db.query(Dream.email)
+        .filter(Dream.is_paid.is_(True), Dream.email.isnot(None), Dream.email != "")
+        .group_by(func.lower(Dream.email))
+        .having(func.count(Dream.id) > 1)
+        .all()
+    )
+    return {
+        "completed_previews": total_previews,
+        "completed_first_reflections": first_previews,
+        "returning_reflections": returning_previews,
+        "paid_reflections": paid_reflections,
+        "returning_subscribers": len(returning_subscriber_rows),
+    }
 
 @app.get("/health")
 def health():

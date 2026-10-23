@@ -1,7 +1,7 @@
 {
-  "name": "DreamDecode - Biblical Dream Interpreter",
+  "name": "DreamDecode — Biblical Dream Reflection",
   "short_name": "DreamDecode",
-  "description": "AI-powered biblical dream interpretation",
+  "description": "Reflect on your dreams through a biblical lens — possible themes, Scripture references, and questions for personal discernment.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0f172a",

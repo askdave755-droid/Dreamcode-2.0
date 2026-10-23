@@ -13,7 +13,11 @@ def get_hebrew_year():
     return hebrew_year
 
 def generate_dream_pdf(name, report_data):
-    """Generate luxury PDF report using ReportLab"""
+    """Generate luxury PDF report using ReportLab.
+
+    name may be None (it is no longer collected up front).
+    """
+    display_name = (name or "").strip() or "Friend"
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer,
@@ -56,9 +60,18 @@ def generate_dream_pdf(name, report_data):
     
     # Header
     elements.append(Paragraph("DreamDecode", title_style))
-    elements.append(Paragraph(f"Biblical Dream Interpretation for {name}", styles['Heading2']))
-    elements.append(Paragraph(f"Hebrew Year {get_hebrew_year()}", styles['Italic']))
+    elements.append(Paragraph("Biblical Dream Reflection Report", styles['Heading2']))
+    elements.append(Paragraph(f"Prepared for {display_name} — Hebrew Year {get_hebrew_year()}", styles['Italic']))
     elements.append(Spacer(1, 0.2*inch))
+
+    # Discernment note (when the report includes one)
+    discernment_note = (report_data.get('discernment_note') or "").strip()
+    if discernment_note:
+        elements.append(Paragraph(
+            f"<b>A note on discernment:</b> {discernment_note}",
+            normal_style
+        ))
+        elements.append(Spacer(1, 0.1*inch))
     
     # Interpretations
     if 'interpretations' in report_data:
@@ -66,6 +79,14 @@ def generate_dream_pdf(name, report_data):
             elements.append(Paragraph(interp['title'], heading_style))
             elements.append(Paragraph(interp['meaning'], normal_style))
             elements.append(Spacer(1, 0.1*inch))
+
+    # Reflection Questions
+    reflection_questions = report_data.get('reflection_questions') or []
+    if reflection_questions:
+        elements.append(Spacer(1, 0.15*inch))
+        elements.append(Paragraph("Questions for Personal Reflection", heading_style))
+        for idx, question in enumerate(reflection_questions, start=1):
+            elements.append(Paragraph(f"{idx}. {question}", normal_style))
     
     # Dream Symbol Dictionary
     symbol_dictionary = report_data.get('symbol_dictionary')
@@ -73,7 +94,7 @@ def generate_dream_pdf(name, report_data):
         elements.append(Spacer(1, 0.2*inch))
         elements.append(Paragraph("Dream Symbol Dictionary", heading_style))
         elements.append(Paragraph(
-            "<i>Every symbol decoded through the language of Scripture</i>",
+            "<i>Possible meanings to weigh through the language of Scripture</i>",
             normal_style
         ))
         elements.append(Spacer(1, 0.05*inch))
@@ -94,7 +115,7 @@ def generate_dream_pdf(name, report_data):
         elements.append(Spacer(1, 0.2*inch))
         elements.append(Paragraph("Source Discernment", heading_style))
         elements.append(Paragraph(
-            f"This dream most likely flows from: <b>{discernment.get('source', '')}</b>",
+            f"For prayerful discernment — this dream may flow from: <b>{discernment.get('source', '')}</b>",
             normal_style
         ))
         elements.append(Paragraph(discernment.get('explanation', ''), normal_style))
@@ -130,7 +151,7 @@ def generate_dream_pdf(name, report_data):
         
         daniel = anchor.get('daniel', {})
         if daniel:
-            elements.append(Paragraph("<b>Daniel — The Revealer of Mysteries</b>", styles['Normal']))
+            elements.append(Paragraph("<b>Daniel — The Interpreter of Visions</b>", styles['Normal']))
             elements.append(Spacer(1, 0.05*inch))
             elements.append(Paragraph(f"<i>{daniel.get('reference', '')}</i>", normal_style))
             elements.append(Paragraph(daniel.get('connection', ''), normal_style))
@@ -145,7 +166,9 @@ def generate_dream_pdf(name, report_data):
     # Footer
     elements.append(Spacer(1, 0.5*inch))
     elements.append(Paragraph(
-        "<i>This interpretation is provided for spiritual guidance. Always seek confirmation through prayer and wise counsel.</i>",
+        "<i>These reflections are prompts for personal discernment — not prophecy, not a definitive "
+        "message from God, and not a substitute for Scripture, prayer, or pastoral counsel. "
+        "\"Test everything; hold fast what is good.\" — 1 Thessalonians 5:21</i>",
         styles['Normal']
     ))
     

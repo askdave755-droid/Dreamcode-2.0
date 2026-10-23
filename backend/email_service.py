@@ -30,7 +30,7 @@ def _from_email():
 
 # ---------- Low-level senders ----------
 
-def _send_via_brevo(to_email, subject, html_content, pdf_bytes=None, pdf_name="dream-revelation.pdf"):
+def _send_via_brevo(to_email, subject, html_content, pdf_bytes=None, pdf_name="dream-reflection.pdf"):
     """Send via Brevo (formerly Sendinblue) transactional API"""
     payload = {
         "sender": {"email": _from_email(), "name": FROM_NAME},
@@ -63,7 +63,7 @@ def _send_via_brevo(to_email, subject, html_content, pdf_bytes=None, pdf_name="d
         print(f"❌ Brevo email exception to {to_email}: {e}")
         return {"sent": False, "provider": "brevo", "error": str(e)}
 
-def _send_via_sendgrid(to_email, subject, html_content, pdf_bytes=None, pdf_name="dream-revelation.pdf"):
+def _send_via_sendgrid(to_email, subject, html_content, pdf_bytes=None, pdf_name="dream-reflection.pdf"):
     """Send via SendGrid (legacy path)"""
     from sendgrid import SendGridAPIClient
     from sendgrid.helpers.mail import Mail, Attachment, FileContent, FileName, FileType, Disposition
@@ -94,7 +94,7 @@ def _send_via_sendgrid(to_email, subject, html_content, pdf_bytes=None, pdf_name
         print(f"❌ SendGrid email failed to {to_email}: {str(e)} | body: {body}")
         return {"sent": False, "provider": "sendgrid", "error": str(e), "provider_body": str(body)}
 
-def send_email(to_email, subject, html_content, pdf_bytes=None, pdf_name="dream-revelation.pdf"):
+def send_email(to_email, subject, html_content, pdf_bytes=None, pdf_name="dream-reflection.pdf"):
     """Unified sender — routes to whichever provider is configured.
     Always returns a result dict so failures are visible, never silent."""
     provider = email_provider()
@@ -113,6 +113,8 @@ def send_dream_email(to_email, name, report, pdf_bytes, referral_code):
         print(f"Skipping email to {to_email} - no email provider configured")
         return {"sent": False, "error": "No email provider configured"}
     
+    display_name = (name or "").strip() or "Friend"
+
     # Build email content
     interpretations_html = ""
     if 'interpretations' in report:
@@ -121,6 +123,15 @@ def send_dream_email(to_email, name, report, pdf_bytes, referral_code):
             <h3 style="color: #D4AF37;">{interp['title']}</h3>
             <p>{interp['meaning']}</p>
             """
+
+    questions_html = ""
+    reflection_questions = report.get('reflection_questions') or []
+    if reflection_questions:
+        items = "".join(f"<li style='margin-bottom: 8px;'>{q}</li>" for q in reflection_questions)
+        questions_html = f"""
+        <h3 style="color: #D4AF37;">Questions for Personal Reflection</h3>
+        <ol style="padding-left: 20px;">{items}</ol>
+        """
     
     symbol_dictionary_html = ""
     symbol_dictionary = report.get('symbol_dictionary')
@@ -136,7 +147,7 @@ def send_dream_email(to_email, name, report, pdf_bytes, referral_code):
             """
         symbol_dictionary_html = f"""
         <h3 style="color: #D4AF37;">Dream Symbol Dictionary</h3>
-        <p><i>Every symbol decoded through the language of Scripture</i></p>
+        <p><i>Possible meanings to weigh through the language of Scripture</i></p>
         {entries}
         """
     
@@ -145,7 +156,7 @@ def send_dream_email(to_email, name, report, pdf_bytes, referral_code):
     if discernment:
         discernment_html = f"""
         <h3 style="color: #D4AF37;">🕊️ Source Discernment</h3>
-        <p>This dream most likely flows from: <b>{discernment.get('source', '')}</b></p>
+        <p>For prayerful discernment — this dream may flow from: <b>{discernment.get('source', '')}</b></p>
         <p>{discernment.get('explanation', '')}</p>
         <p><b>Counsel:</b> {discernment.get('counsel', '')}</p>
         """
@@ -171,7 +182,7 @@ def send_dream_email(to_email, name, report, pdf_bytes, referral_code):
         <i>{joseph.get('reference', '')}</i><br>
         {joseph.get('connection', '')}<br>
         <b>Insight:</b> {joseph.get('insight', '')}</p>
-        <p><b>Daniel — The Revealer of Mysteries</b><br>
+        <p><b>Daniel — The Interpreter of Visions</b><br>
         <i>{daniel.get('reference', '')}</i><br>
         {daniel.get('connection', '')}<br>
         <b>Insight:</b> {daniel.get('insight', '')}</p>
@@ -184,17 +195,28 @@ def send_dream_email(to_email, name, report, pdf_bytes, referral_code):
         <p>{report['prayer']}</p>
         """
     
-    share_link = f"https://dreamcode-2-0.vercel.app/gift?code={referral_code}&from={name.replace(' ', '-')}"
-    
+    frontend_url = os.getenv("FRONTEND_URL", "https://dreamcode-2-0.vercel.app").rstrip("/")
+    share_link = f"{frontend_url}/gift?code={referral_code}"
+
+    discernment_note = (report.get('discernment_note') or "").strip()
+    discernment_note_html = (
+        f'<p style="background: #faf6ec; border-left: 3px solid #D4AF37; padding: 10px 14px;">'
+        f"<b>A note on discernment:</b> {discernment_note}</p>"
+        if discernment_note else ""
+    )
+
     html_content = f"""
     <div style="font-family: Georgia, serif; max-width: 600px; margin: 0 auto; color: #333;">
-        <h1 style="color: #D4AF37; text-align: center;">Your Dream Revelation</h1>
-        <p>Hello {name},</p>
-        <p>Your biblical dream interpretation is ready. Below is a summary, and your full report is attached as a PDF.</p>
+        <h1 style="color: #D4AF37; text-align: center;">Your Dream Reflection Report</h1>
+        <p>Hello {display_name},</p>
+        <p>Your biblical dream reflection report is ready. Below is a summary, and your full report is attached as a PDF.</p>
+        {discernment_note_html}
         
         <hr style="border: none; border-top: 1px solid #D4AF37; margin: 20px 0;">
         
         {interpretations_html}
+        
+        {questions_html}
         
         {symbol_dictionary_html}
         
@@ -210,19 +232,19 @@ def send_dream_email(to_email, name, report, pdf_bytes, referral_code):
         
         <div style="background: #f9f9f9; padding: 20px; border-radius: 5px; margin: 20px 0;">
             <h3 style="color: #D4AF37; margin-top: 0;">🕊️ Share the Blessing</h3>
-            <p>Pass on the gift of free dream interpretation to someone who needs spiritual insight:</p>
+            <p>Share a free dream reflection preview with someone who would appreciate it:</p>
             <p><a href="{share_link}" style="color: #D4AF37; text-decoration: none; font-weight: bold;">{share_link}</a></p>
         </div>
         
         <p style="font-size: 12px; color: #666; margin-top: 30px;">
-            <i>This interpretation is provided for spiritual guidance. Always seek confirmation through prayer and wise counsel.</i>
+            <i>These reflections are prompts for personal discernment — not prophecy, not a definitive message from God, and not a substitute for Scripture, prayer, or pastoral counsel. "Test everything; hold fast what is good." — 1 Thessalonians 5:21</i>
         </p>
     </div>
     """
     
     return send_email(
         to_email,
-        "Your Biblical Dream Interpretation is Ready",
+        "Your Biblical Dream Reflection Report is Ready",
         html_content,
         pdf_bytes
     )
@@ -258,12 +280,15 @@ def send_referrer_notification(referrer_email, referrer_name, new_user_name):
     """Notify referrer that someone used their code"""
     if not email_provider():
         return
-    
+
+    referrer_display = (referrer_name or "").strip() or "Friend"
+    new_user_display = (new_user_name or "").strip() or "Someone"
+
     html_content = f"""
     <div style="font-family: Georgia, serif; max-width: 600px; margin: 0 auto;">
         <h2 style="color: #D4AF37;">Your Blessing is Spreading!</h2>
-        <p>Hello {referrer_name},</p>
-        <p>Great news! {new_user_name} has used your blessing code to receive their dream interpretation.</p>
+        <p>Hello {referrer_display},</p>
+        <p>Great news! {new_user_display} has used your blessing code to receive their dream reflection report.</p>
         <p>"Freely you have received, freely give." — Matthew 10:8</p>
         <p>Your act of sharing continues to multiply blessings.</p>
     </div>

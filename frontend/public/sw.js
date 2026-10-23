@@ -1,4 +1,4 @@
-const CACHE_NAME = 'dreamdecode-v3';
+const CACHE_NAME = 'dreamdecode-v4';
 const urlsToCache = [
   '/',
   '/index.html',

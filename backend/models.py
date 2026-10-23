@@ -13,13 +13,20 @@ class Dream(Base):
     __tablename__ = "dreams"
     
     id = Column(String, primary_key=True, index=True)
-    name = Column(String, nullable=False)
-    email = Column(String, nullable=False, index=True)
+    # Name and email are optional at preview time — an email is only required
+    # later, at subscribe (for the receipt and report delivery).
+    # Existing databases are migrated automatically on boot by
+    # _run_startup_migrations() in main.py.
+    name = Column(String, nullable=True)
+    email = Column(String, nullable=True, index=True)
     dream_text = Column(Text, nullable=False)
     emotion = Column(String, nullable=True)
     colors = Column(String, nullable=True)
     symbols = Column(String, nullable=True)
     
+    # Anonymous funnel flag (first-party localStorage check on client; no PII)
+    is_returning = Column(Boolean, default=False)
+
     # Payment status
     is_paid = Column(Boolean, default=False)
     interpretation = Column(Text, nullable=True)  # JSON string
