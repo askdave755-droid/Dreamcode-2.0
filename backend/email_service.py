@@ -123,6 +123,15 @@ def send_dream_email(to_email, name, report, pdf_bytes, referral_code):
             <h3 style="color: #D4AF37;">{interp['title']}</h3>
             <p>{interp['meaning']}</p>
             """
+
+    questions_html = ""
+    reflection_questions = report.get('reflection_questions') or []
+    if reflection_questions:
+        items = "".join(f"<li style='margin-bottom: 8px;'>{q}</li>" for q in reflection_questions)
+        questions_html = f"""
+        <h3 style="color: #D4AF37;">Questions for Personal Reflection</h3>
+        <ol style="padding-left: 20px;">{items}</ol>
+        """
     
     symbol_dictionary_html = ""
     symbol_dictionary = report.get('symbol_dictionary')
@@ -207,6 +216,8 @@ def send_dream_email(to_email, name, report, pdf_bytes, referral_code):
         
         {interpretations_html}
         
+        {questions_html}
+        
         {symbol_dictionary_html}
         
         {discernment_html}
@@ -221,7 +232,7 @@ def send_dream_email(to_email, name, report, pdf_bytes, referral_code):
         
         <div style="background: #f9f9f9; padding: 20px; border-radius: 5px; margin: 20px 0;">
             <h3 style="color: #D4AF37; margin-top: 0;">🕊️ Share the Blessing</h3>
-            <p>Pass on the gift of a free dream reflection to someone who would appreciate it:</p>
+            <p>Share a free dream reflection preview with someone who would appreciate it:</p>
             <p><a href="{share_link}" style="color: #D4AF37; text-decoration: none; font-weight: bold;">{share_link}</a></p>
         </div>
         

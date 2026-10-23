@@ -79,6 +79,14 @@ def generate_dream_pdf(name, report_data):
             elements.append(Paragraph(interp['title'], heading_style))
             elements.append(Paragraph(interp['meaning'], normal_style))
             elements.append(Spacer(1, 0.1*inch))
+
+    # Reflection Questions
+    reflection_questions = report_data.get('reflection_questions') or []
+    if reflection_questions:
+        elements.append(Spacer(1, 0.15*inch))
+        elements.append(Paragraph("Questions for Personal Reflection", heading_style))
+        for idx, question in enumerate(reflection_questions, start=1):
+            elements.append(Paragraph(f"{idx}. {question}", normal_style))
     
     # Dream Symbol Dictionary
     symbol_dictionary = report_data.get('symbol_dictionary')

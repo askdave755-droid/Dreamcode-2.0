@@ -31,27 +31,41 @@ except Exception as e:
     print(f"⚠️ Database init failed (app will still serve /health): {e}")
 
 def _run_startup_migrations():
-    """Relax dreams.name / dreams.email to nullable on existing databases.
+    """Apply idempotent schema updates on existing databases.
 
     create_all() only creates missing tables — it never alters columns — so
-    databases created before the trust rework still have NOT NULL constraints.
-    This ALTER is idempotent and safe to run on every boot. Postgres only;
-    wrapped so a failure can never crash startup.
+    databases created before the trust rework still have NOT NULL constraints
+    on name/email and lack is_returning. Safe to run on every boot; wrapped so
+    a failure can never crash startup.
     """
     if engine is None:
         return
     try:
-        if engine.dialect.name != "postgresql":
-            return
+        dialect = engine.dialect.name
     except Exception:
         return
-    try:
-        with engine.begin() as conn:
-            conn.execute(text("ALTER TABLE dreams ALTER COLUMN name DROP NOT NULL"))
-            conn.execute(text("ALTER TABLE dreams ALTER COLUMN email DROP NOT NULL"))
-        print("✅ Startup migration: dreams.name/email are now nullable")
-    except Exception as e:
-        print(f"⚠️ Startup migration skipped/failed (non-fatal): {e}")
+
+    if dialect == "postgresql":
+        statements = [
+            "ALTER TABLE dreams ALTER COLUMN name DROP NOT NULL",
+            "ALTER TABLE dreams ALTER COLUMN email DROP NOT NULL",
+            "ALTER TABLE dreams ADD COLUMN IF NOT EXISTS is_returning BOOLEAN DEFAULT FALSE",
+        ]
+        for stmt in statements:
+            try:
+                with engine.begin() as conn:
+                    conn.execute(text(stmt))
+            except Exception as e:
+                print(f"⚠️ Startup migration skipped ({stmt}): {e}")
+        print("✅ Startup migrations verified (dreams.name/email nullable, is_returning present)")
+    elif dialect == "sqlite":
+        try:
+            with engine.begin() as conn:
+                cols = [row[1] for row in conn.execute(text("PRAGMA table_info(dreams)")).fetchall()]
+                if cols and "is_returning" not in cols:
+                    conn.execute(text("ALTER TABLE dreams ADD COLUMN is_returning BOOLEAN DEFAULT 0"))
+        except Exception as e:
+            print(f"⚠️ SQLite startup migration skipped (non-fatal): {e}")
 
 _run_startup_migrations()
 
@@ -77,6 +91,7 @@ class DreamInput(BaseModel):
     colors: Optional[str] = None
     symbols: Optional[str] = None
     referral_code: Optional[str] = None
+    is_returning: Optional[bool] = False
 
 class CheckoutRequest(BaseModel):
     dream_id: str
@@ -140,36 +155,80 @@ def _customer_has_active_subscription(email: str) -> bool:
                         return True
     return False
 
-def generate_teaser(dream_data: dict):
-    """Generate a 2-sentence free-preview teaser using GPT-4o-mini.
+def generate_preview(dream_data: dict) -> dict:
+    """Generate a structured free preview using GPT-4o-mini.
 
-    The teaser hints at possible themes worth reflecting on — it must never
-    declare what the dream means or claim divine authority.
+    Delivers on the first-screen promise — possible biblical theme(s), a
+    Scripture reference to read in context, and a personal reflection question
+    — while staying humble and never claiming God's definitive meaning.
     """
-    prompt = f"""You are helping a Christian reflect on a dream through a biblical lens. 
-    Write a compelling 2-sentence preview that:
-    1. References ONE specific detail from the dream (color, object, or feeling)
-    2. Suggests it may hold themes worth prayerful reflection, without declaring any meaning
-    3. Uses warm, biblical language
-    4. Ends with gentle intrigue (ellipsis or "but...")
-    
-    Dream: {dream_data['dream_text']}
-    Feeling: {dream_data.get('emotion') or 'not specified'}
-    Colors: {dream_data.get('colors') or 'none mentioned'}
-    
-    Write only the 2-sentence preview, nothing else."""
-    
+    prompt = f"""You are a humble Christian guide helping someone reflect on a dream through a biblical lens.
+Never prophesy, never assign fixed one-to-one symbol codes, and never declare what God is saying. Use language like "may suggest," "could invite reflection on," or "is worth weighing in prayer."
+
+Dream: {dream_data['dream_text']}
+Feeling that stood out: {dream_data.get('emotion') or 'not specified'}
+Colors remembered: {dream_data.get('colors') or 'none mentioned'}
+Symbols/objects noted: {dream_data.get('symbols') or 'none mentioned'}
+
+Return STRICT JSON with this exact shape:
+{{
+  "summary": "2-3 warm, humble sentences referencing one specific detail or feeling from the dream and suggesting a possible biblical theme worth prayerful consideration (never a verdict).",
+  "scripture": {{
+    "reference": "Book Chapter:Verse",
+    "text": "Exact short Scripture verse text that connects to that possible theme"
+  }},
+  "reflection_question": "One gentle, open-ended question to help the dreamer pray and reflect personally on this dream"
+}}"""
+
     try:
         response = get_openai_client().chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
-            temperature=0.8,
-            max_tokens=150
+            temperature=0.7,
+            max_tokens=300,
+            response_format={"type": "json_object"}
         )
-        return response.choices[0].message.content.strip()
+        parsed = json.loads(response.choices[0].message.content)
+        summary = (parsed.get("summary") or "").strip()
+        scripture = parsed.get("scripture") or {}
+        question = (parsed.get("reflection_question") or "").strip()
+        if summary and scripture.get("reference") and question:
+            return {
+                "summary": summary,
+                "scripture": {
+                    "reference": scripture.get("reference", "").strip(),
+                    "text": (scripture.get("text") or "").strip(),
+                },
+                "reflection_question": question,
+            }
     except Exception as e:
-        print(f"OpenAI teaser error: {e}")
-        return "Something in your dream stands out as worth prayerful reflection... but its fuller themes are still waiting to be explored."
+        print(f"OpenAI preview error: {e}")
+
+    feeling = (dream_data.get("emotion") or "").strip().lower()
+    feeling_clause = (
+        f" — especially the sense of {feeling} that stood out —"
+        if feeling else ""
+    )
+    return {
+        "summary": (
+            f"The imagery in your dream{feeling_clause} may invite quiet, prayerful reflection on "
+            "where you are seeking clarity, peace, or direction right now. Rather than rushing to a fixed "
+            "meaning, consider how these details echo themes of God's presence and wisdom in Scripture."
+        ),
+        "scripture": {
+            "reference": "Psalm 16:7",
+            "text": "I will praise the LORD, who counsels me; even at night my heart instructs me.",
+        },
+        "reflection_question": (
+            "Which moment or feeling in this dream lingers with you most today, and what happens "
+            "when you bring that honest impression before God in prayer?"
+        ),
+    }
+
+
+def generate_teaser(dream_data: dict) -> str:
+    """Backwards-compatible string helper returning the preview summary."""
+    return generate_preview(dream_data)["summary"]
 
 def generate_full_report(dream_data: dict):
     """Generate full biblical interpretation using GPT-4o.
@@ -213,8 +272,13 @@ Return STRICT JSON format:
     },
     "interpretations": [
         {"title": "A Theme to Reflect On", "meaning": "..."},
-        {"title": "A Question to Weigh", "meaning": "..."},
+        {"title": "Another Angle to Weigh", "meaning": "..."},
         {"title": "A Possible Next Step", "meaning": "..."}
+    ],
+    "reflection_questions": [
+        "Open-ended personal reflection question #1 grounded in the dream's imagery or feeling",
+        "Open-ended personal reflection question #2 connecting the dream to daily walk / Scripture",
+        "Open-ended question #3 inviting prayer or conversation with a pastor / trusted mature believer"
     ],
     "symbol_dictionary": [
         {
@@ -279,8 +343,13 @@ IMPORTANT: Include every significant symbol, color, number, name, and place from
             },
             "interpretations": [
                 {"title": "A Theme to Reflect On", "meaning": "Your dream may hold themes worth prayerful consideration — notice which images linger with you most."},
-                {"title": "A Question to Weigh", "meaning": "What feelings and symbols stood out most vividly? Those are often the best starting points for journaling and prayer."},
+                {"title": "Another Angle to Weigh", "meaning": "In Scripture, the same image can carry comfort in one season and caution in another; weigh the overall fruit and tone of the dream rather than isolating a single detail."},
                 {"title": "A Possible Next Step", "meaning": "Pray for discernment, read the Scripture below in context, and consider discussing the dream with a trusted pastor or mature believer."}
+            ],
+            "reflection_questions": [
+                "Which single image or feeling from this dream stayed with you most after waking?",
+                "Is there a situation in your current season where you are seeking God's peace, wisdom, or correction?",
+                "Who is a pastor, counselor, or mature Christian friend you could invite to pray and weigh this with you?"
             ],
             "symbol_dictionary": [
                 {
@@ -325,8 +394,9 @@ async def analyze_teaser(dream: DreamInput, db: Session = Depends(get_db)):
         referrer = db.query(Dream).filter(Dream.referral_code == dream.referral_code).first()
         print(f"Referrer found: {(referrer.name if referrer and referrer.name else 'None')}")
     
-    # Generate teaser
-    teaser_text = generate_teaser(dream.dict())
+    # Generate structured free preview (summary + Scripture + reflection question)
+    preview_data = generate_preview(dream.model_dump() if hasattr(dream, "model_dump") else dream.dict())
+    teaser_text = preview_data["summary"]
     
     # Create database record
     db_dream = Dream(
@@ -337,6 +407,7 @@ async def analyze_teaser(dream: DreamInput, db: Session = Depends(get_db)):
         emotion=dream.emotion,
         colors=dream.colors,
         symbols=dream.symbols,
+        is_returning=bool(dream.is_returning),
         referred_by=referrer.id if referrer else None,
         is_paid=False
     )
@@ -349,6 +420,7 @@ async def analyze_teaser(dream: DreamInput, db: Session = Depends(get_db)):
         "dream_id": dream_id,
         "referral_code": db_dream.referral_code,
         "teaser": teaser_text,
+        "preview": preview_data,
         "hebrew_year": get_hebrew_year(),
         "discount_applied": True if referrer else False,
         "price": 4.99,
@@ -492,7 +564,7 @@ async def create_checkout(request: CheckoutRequest, db: Session = Depends(get_db
         raise HTTPException(status_code=500, detail="STRIPE_PRICE_ID not configured — set the $4.99/mo price ID in Railway variables")
     
     success_url = f"{frontend_url}/?session_id={{CHECKOUT_SESSION_ID}}&dream_id={dream_id}"
-    cancel_url = f"{frontend_url}/?cancelled=1"
+    cancel_url = f"{frontend_url}/?cancelled=1&dream_id={dream_id}"
     
     # Trial / intro-discount config — change these in Railway variables, no redeploy needed:
     #   TRIAL_DAYS=7         → card collected, $0 today, first bill after N days
@@ -568,6 +640,18 @@ async def verify_payment(data: PaymentVerify, background_tasks: BackgroundTasks,
         
         if not dream:
             raise HTTPException(status_code=404, detail="Dream not found")
+
+        # Backfill email from Stripe Checkout session if needed
+        if not dream.email:
+            customer_details = getattr(session, "customer_details", None)
+            session_email = (
+                getattr(customer_details, "email", None)
+                or (customer_details.get("email") if isinstance(customer_details, dict) else None)
+                or getattr(session, "customer_email", None)
+            )
+            if session_email:
+                dream.email = session_email.strip()
+                db.commit()
         
         # Check if already processed
         if dream.is_paid and dream.interpretation:
@@ -680,6 +764,42 @@ def test_email():
     result = send_test_email()
     result["email_provider"] = email_provider() or "none"
     return result
+
+@app.get("/api/funnel-metrics")
+def funnel_metrics(db: Session = Depends(get_db)):
+    """Privacy-safe aggregate funnel counts (no emails, names, or dream text):
+    completed first reflections, returning reflections, paid conversions, and
+    returning subscribers."""
+    from sqlalchemy import func
+
+    total_previews = db.query(func.count(Dream.id)).scalar() or 0
+    returning_previews = (
+        db.query(func.count(Dream.id))
+        .filter(Dream.is_returning.is_(True))
+        .scalar()
+        or 0
+    )
+    first_previews = max(0, total_previews - returning_previews)
+    paid_reflections = (
+        db.query(func.count(Dream.id))
+        .filter(Dream.is_paid.is_(True))
+        .scalar()
+        or 0
+    )
+    returning_subscriber_rows = (
+        db.query(Dream.email)
+        .filter(Dream.is_paid.is_(True), Dream.email.isnot(None), Dream.email != "")
+        .group_by(func.lower(Dream.email))
+        .having(func.count(Dream.id) > 1)
+        .all()
+    )
+    return {
+        "completed_previews": total_previews,
+        "completed_first_reflections": first_previews,
+        "returning_reflections": returning_previews,
+        "paid_reflections": paid_reflections,
+        "returning_subscribers": len(returning_subscriber_rows),
+    }
 
 @app.get("/health")
 def health():
