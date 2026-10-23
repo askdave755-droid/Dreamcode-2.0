@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -754,6 +754,89 @@ async def download_pdf(dream_id: str, db: Session = Depends(get_db)):
         media_type="application/pdf",
         headers={"Content-Disposition": f"attachment; filename=dream-reflection-{dream_id}.pdf"}
     )
+
+MAX_TRANSCRIBE_BYTES = 10 * 1024 * 1024  # 10 MB (~10+ minutes of compressed voice)
+
+
+def _normalize_audio_upload(filename: Optional[str], content_type: Optional[str]) -> tuple:
+    """Map browser MediaRecorder MIME types (especially iOS Chrome audio/mp4)
+    to extensions OpenAI Whisper accepts."""
+    raw_ct = (content_type or "").split(";")[0].strip().lower()
+    ext_map = {
+        "audio/mp4": ("dream.m4a", "audio/mp4"),
+        "audio/x-m4a": ("dream.m4a", "audio/mp4"),
+        "audio/m4a": ("dream.m4a", "audio/mp4"),
+        "audio/aac": ("dream.m4a", "audio/mp4"),
+        "video/mp4": ("dream.mp4", "audio/mp4"),
+        "audio/webm": ("dream.webm", "audio/webm"),
+        "video/webm": ("dream.webm", "audio/webm"),
+        "audio/ogg": ("dream.ogg", "audio/ogg"),
+        "audio/oga": ("dream.oga", "audio/ogg"),
+        "audio/wav": ("dream.wav", "audio/wav"),
+        "audio/x-wav": ("dream.wav", "audio/wav"),
+        "audio/wave": ("dream.wav", "audio/wav"),
+        "audio/mpeg": ("dream.mp3", "audio/mpeg"),
+        "audio/mp3": ("dream.mp3", "audio/mpeg"),
+        "audio/flac": ("dream.flac", "audio/flac"),
+    }
+    if raw_ct in ext_map:
+        return ext_map[raw_ct]
+
+    lower_name = (filename or "").lower()
+    for ext, mime in (
+        (".m4a", "audio/mp4"),
+        (".mp4", "audio/mp4"),
+        (".webm", "audio/webm"),
+        (".ogg", "audio/ogg"),
+        (".oga", "audio/ogg"),
+        (".wav", "audio/wav"),
+        (".mp3", "audio/mpeg"),
+        (".mpeg", "audio/mpeg"),
+        (".flac", "audio/flac"),
+    ):
+        if lower_name.endswith(ext):
+            return (f"dream{ext}", mime)
+
+    return ("dream.m4a", "audio/mp4")
+
+
+@app.post("/api/transcribe-dream")
+async def transcribe_dream(audio: UploadFile = File(...)):
+    """Transcribe short voice recording in memory (used automatically on iPhone
+    Chrome, Firefox, and webviews where built-in Web Speech API is blocked).
+    Audio is processed in RAM only and never written to disk or the database."""
+    audio_bytes = await audio.read(MAX_TRANSCRIBE_BYTES + 1)
+    await audio.close()
+
+    if len(audio_bytes) > MAX_TRANSCRIBE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail="Voice recording is too long (10 MB max). Please record a shorter summary of your dream."
+        )
+
+    if len(audio_bytes) < 500:
+        return {"text": ""}
+
+    safe_filename, clean_mime = _normalize_audio_upload(audio.filename, audio.content_type)
+    model = (os.getenv("TRANSCRIBE_MODEL") or "whisper-1").strip()
+
+    try:
+        client = get_openai_client()
+        transcript = client.audio.transcriptions.create(
+            model=model,
+            file=(safe_filename, audio_bytes, clean_mime),
+        )
+        text_out = (getattr(transcript, "text", None) or "").strip()
+        return {"text": text_out}
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        print(f"❌ Audio transcription error ({safe_filename}, {len(audio_bytes)}B): {e}")
+        raise HTTPException(
+            status_code=502,
+            detail="Could not transcribe voice recording right now — please try again or type your dream below."
+        )
+
 
 @app.get("/api/test-email")
 def test_email():
